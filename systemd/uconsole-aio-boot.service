@@ -1,0 +1,12 @@
+[Unit]
+Description=Set HackerGadgets AIO V2 module power
+After=multi-user.target
+Before=gpsd.service meshtasticd.service meshcore.service meshcore-uconsole.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/uconsole-aio-boot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

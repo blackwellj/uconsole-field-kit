@@ -1,0 +1,16 @@
+[Unit]
+Description=MeshDash
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@@USER@@
+WorkingDirectory=@@WORKDIR@@
+ExecStart=/opt/meshdash/venv/bin/python @@WORKDIR@@/meshtastic_dashboard.py
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

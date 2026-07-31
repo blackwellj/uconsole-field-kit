@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+STATE_DIR=/run/uconsole-display
+mkdir -p "$STATE_DIR"
+
+find_backlight() {
+    local candidate
+    for candidate in /sys/class/backlight/*; do
+        [[ -d "$candidate" && -w "$candidate/brightness" ]] || continue
+        printf '%s\n' "$candidate"
+        return 0
+    done
+    return 1
+}
+
+BL="$(find_backlight)" || {
+    echo "No writable backlight device found." >&2
+    exit 1
+}
+
+MAX="$(cat "$BL/max_brightness")"
+CURRENT="$(cat "$BL/brightness")"
+STATE_FILE="$STATE_DIR/last-brightness"
+
+case "${1:-toggle}" in
+    off)
+        if (( CURRENT > 0 )); then
+            printf '%s\n' "$CURRENT" > "$STATE_FILE"
+        fi
+        printf '0\n' > "$BL/brightness"
+        ;;
+    on)
+        VALUE="$MAX"
+        [[ -s "$STATE_FILE" ]] && VALUE="$(cat "$STATE_FILE")"
+        (( VALUE > 0 )) || VALUE="$MAX"
+        (( VALUE <= MAX )) || VALUE="$MAX"
+        printf '%s\n' "$VALUE" > "$BL/brightness"
+        ;;
+    toggle)
+        if (( CURRENT > 0 )); then
+            "$0" off
+        else
+            "$0" on
+        fi
+        ;;
+    status)
+        if (( CURRENT > 0 )); then
+            echo "on ($CURRENT/$MAX)"
+        else
+            echo "off"
+        fi
+        ;;
+    *)
+        echo "Usage: uconsole-display on|off|toggle|status" >&2
+        exit 2
+        ;;
+esac

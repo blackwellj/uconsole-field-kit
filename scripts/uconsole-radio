@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+stop_unit_if_present() {
+    local unit="$1"
+    if systemctl list-unit-files "$unit" >/dev/null 2>&1; then
+        systemctl disable --now "$unit" || true
+    fi
+}
+
+start_first_unit() {
+    local unit
+    for unit in "$@"; do
+        if systemctl list-unit-files "$unit" >/dev/null 2>&1; then
+            systemctl enable --now "$unit"
+            echo "$unit"
+            return 0
+        fi
+    done
+    return 1
+}
+
+lora_on() {
+    command -v aiov2_ctl >/dev/null 2>&1 && aiov2_ctl LORA on || true
+}
+
+lora_off() {
+    command -v aiov2_ctl >/dev/null 2>&1 && aiov2_ctl LORA off || true
+}
+
+stop_all() {
+    stop_unit_if_present meshtasticd.service
+    stop_unit_if_present meshcore.service
+    stop_unit_if_present meshcore-uconsole.service
+    stop_unit_if_present meshcore-gui.service
+}
+
+case "${1:-status}" in
+    meshtastic)
+        stop_all
+        lora_on
+        if start_first_unit meshtasticd.service; then
+            echo "Meshtastic mode enabled."
+        else
+            echo "meshtasticd is not installed. Meshtastic CLI remains available." >&2
+            exit 1
+        fi
+        ;;
+    meshcore)
+        stop_all
+        lora_on
+        if start_first_unit meshcore.service meshcore-uconsole.service meshcore-gui.service; then
+            echo "MeshCore mode enabled."
+        else
+            echo "No recognised MeshCore systemd service was found." >&2
+            exit 1
+        fi
+        ;;
+    off)
+        stop_all
+        lora_off
+        echo "LoRa services and LoRa power disabled."
+        ;;
+    status)
+        echo "LoRa power:"
+        if command -v aiov2_ctl >/dev/null 2>&1; then
+            aiov2_ctl --status || true
+        else
+            echo "aiov2_ctl not installed"
+        fi
+        echo
+        echo "Mesh services:"
+        systemctl --no-pager --full status meshtasticd.service meshcore.service meshcore-uconsole.service meshcore-gui.service 2>/dev/null || true
+        ;;
+    *)
+        echo "Usage: sudo uconsole-radio meshtastic|meshcore|off|status" >&2
+        exit 2
+        ;;
+esac

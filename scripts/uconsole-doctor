@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -u
+
+pass() { printf 'PASS  %s\n' "$*"; }
+warn() { printf 'WARN  %s\n' "$*"; }
+fail() { printf 'FAIL  %s\n' "$*"; }
+
+echo "uConsole Field Kit diagnostics"
+echo
+
+MODEL="$(tr -d '\0' </proc/device-tree/model 2>/dev/null || true)"
+[[ "$MODEL" == *"Compute Module 5"* || "$MODEL" == *"uConsole"* ]] && pass "Hardware model: $MODEL" || warn "Unexpected hardware model: ${MODEL:-unknown}"
+
+ROOT="$(findmnt -no SOURCE /)"
+[[ "$ROOT" == /dev/nvme* ]] && pass "Root filesystem is on NVMe: $ROOT" || warn "Root filesystem is not on NVMe: $ROOT"
+
+if command -v nvme >/dev/null 2>&1 && nvme list | grep -q '/dev/nvme'; then
+    pass "NVMe device detected"
+else
+    fail "NVMe device not detected"
+fi
+
+if command -v aiov2_ctl >/dev/null 2>&1; then
+    pass "aiov2_ctl installed"
+    aiov2_ctl --status || warn "aiov2_ctl status failed"
+else
+    fail "aiov2_ctl missing"
+fi
+
+for command in meshtastic gpspipe rtl_433 rtl_test node-red; do
+    if command -v "$command" >/dev/null 2>&1; then
+        pass "$command installed"
+    else
+        warn "$command missing"
+    fi
+done
+
+for service in uconsole-aio-boot.service uconsole-power-button.service mesh-dash.service; do
+    if systemctl is-enabled "$service" >/dev/null 2>&1; then
+        pass "$service enabled"
+    else
+        warn "$service not enabled or not installed"
+    fi
+done
+
+if systemctl is-active meshtasticd.service >/dev/null 2>&1; then
+    pass "Active mesh mode: Meshtastic"
+elif systemctl is-active meshcore.service >/dev/null 2>&1 || \
+     systemctl is-active meshcore-uconsole.service >/dev/null 2>&1 || \
+     systemctl is-active meshcore-gui.service >/dev/null 2>&1; then
+    pass "Active mesh mode: MeshCore"
+else
+    warn "No recognised mesh service is active"
+fi
+
+echo
+echo "Storage:"
+lsblk -o NAME,MODEL,SIZE,TYPE,FSTYPE,MOUNTPOINTS
+echo
+echo "USB:"
+lsusb
