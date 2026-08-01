@@ -142,34 +142,42 @@ log "[4/12] Enabling SSH and VNC..."
 # SSH
 systemctl enable --now ssh
 
-# VNC: x11vnc listening on :0 (shares the physical display)
+# VNC: check if display is Xorg or Xwayland
+# x11vnc only works reliably with Xorg. On Xwayland (which Rex's images use),
+# x11vnc gets BadMatch on X_GetImage and crash-loops forever.
+# We install x11vnc but DON'T enable the service automatically.
+# If you're on Xorg, run: sudo systemctl enable --now x11vnc
+# If you're on Xwayland, use wayvnc instead: sudo apt install wayvnc
+
 # Generate a default VNC password if none exists
 VNC_PASS_FILE="/etc/x11vnc.pass"
 if [[ ! -f "$VNC_PASS_FILE" ]]; then
     x11vnc -storepasswd "$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 12)" "$VNC_PASS_FILE"
-    log "  VNC auto-password generated. Change with: sudo x11vnc -storepasswd <pass> $VNC_PASS_FILE"
+    log "  VNC password generated. Change with: sudo x11vnc -storepasswd <pass> $VNC_PASS_FILE"
 fi
 
 cat > /etc/systemd/system/x11vnc.service <<'UNIT'
 [Unit]
-Description=x11vnc VNC server (shares physical display)
+Description=x11vnc VNC server (shares physical display, Xorg only)
 After=graphical.target
 Requires=graphical.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/x11vnc -display :0 -rfbauth /etc/x11vnc.pass -rfbport 5900 -shared -forever -bg -o /var/log/x11vnc.log
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/james/.Xauthority
+ExecStartPre=/bin/sh -c 'sleep 10'
+ExecStart=/usr/bin/x11vnc -display :0 -auth /home/james/.Xauthority -rfbauth /etc/x11vnc.pass -rfbport 5900 -shared -forever -noxdamage -nosel -noprimary -o /var/log/x11vnc.log
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=graphical.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable x11vnc.service
-
-log "  SSH enabled (port 22). VNC enabled (port 5900, shares physical display)."
+# Do NOT enable x11vnc automatically — it crash-loops on Xwayland
+log "  x11vnc installed but NOT enabled (Xwayland incompatible). For VNC use: sudo apt install wayvnc"
 
 # ----------------------------------------------------------------------------
 # Phase 5 — Meshtastic CLI, daemon, and Contact TUI
