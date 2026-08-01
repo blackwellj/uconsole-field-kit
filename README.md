@@ -13,8 +13,9 @@ It provisions a blank NVMe by cloning the currently running, known good uConsole
 
 ## Installed features
 
-* HackerGadgets AIO controller and GUI
-* GPS, SDR and internal USB enabled at boot
+* HackerGadgets AIO controller and GUI (via `aiov2_ctl --install`)
+* HackerGadgets AIO companion apps: `sdrpp-brown`, `meshtastic-mui`, `tar1090`, `pygpsclient`
+* GPS, SDR and internal USB enabled at boot (configured through `aiov2_ctl --boot-rail`, applied by the upstream `aiov2-rails-boot.service`)
 * LoRa power control
 * Short power button press toggles the display backlight
 * Meshtastic CLI
@@ -27,6 +28,7 @@ It provisions a blank NVMe by cloning the currently running, known good uConsole
 * `uconsole-doctor`
 * `uconsole-radio`
 * `uconsole-display`
+* Hardware RTC sync (`aiov2_ctl --sync-rtc`)
 
 ## Important
 
@@ -95,7 +97,9 @@ http://UCONSOLE_IP:8000/setup
 
 ## Notes
 
-Meshtastic and MeshCore cannot both own the AIO SX1262 simultaneously. `uconsole-radio` stops the inactive stack before starting the selected one.
+Meshtastic and MeshCore cannot both own the AIO SX1262 simultaneously. `uconsole-radio` stops the inactive stack before starting the selected one. It controls the LoRa GPIO pin directly via `pinctrl` to avoid `aiov2_ctl`'s implicit meshtasticd auto-start, then manages the systemd services explicitly.
+
+Boot-rail GPIO states (GPS, SDR, USB, LoRa power at boot) are owned by `aiov2-rails-boot.service` from the upstream `aiov2_ctl` package. The field kit's `aio-boot.sh` configures the per-rail preferences via `aiov2_ctl --boot-rail` during install; no duplicate boot service is installed.
 
 MeshDash is a Meshtastic dashboard. It will only receive data while Meshtastic is active and configured.
 

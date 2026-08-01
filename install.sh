@@ -55,8 +55,13 @@ else
     python3 /opt/aiov2_ctl/aiov2_ctl.py --install
 fi
 
+# Configure aiov2_ctl's built-in boot-rail preferences from our defaults,
+# then let the upstream aiov2-rails-boot.service own GPIO at boot.
 install -m 0755 "$SCRIPT_DIR/scripts/aio-boot.sh" /usr/local/sbin/uconsole-aio-boot
-install -m 0644 "$SCRIPT_DIR/systemd/uconsole-aio-boot.service" /etc/systemd/system/uconsole-aio-boot.service
+/usr/local/sbin/uconsole-aio-boot
+
+log "Installing HackerGadgets AIO companion apps (SDR++, Meshtastic GUI, GPS, tar1090)."
+aiov2_ctl --add-apps || log "Companion app installation failed or not available."
 
 log "Installing display power button handler."
 install -m 0755 "$SCRIPT_DIR/scripts/uconsole-display" /usr/local/bin/uconsole-display
@@ -132,9 +137,11 @@ DEFAULT_MESH_MODE=$DEFAULT_MESH_MODE
 EOF
 
 systemctl daemon-reload
-systemctl enable uconsole-aio-boot.service
 systemctl enable uconsole-power-button.service
 systemctl restart systemd-logind || true
+
+log "Syncing system time to hardware RTC."
+aiov2_ctl --sync-rtc || true
 
 case "$DEFAULT_MESH_MODE" in
     meshcore|meshtastic|off)

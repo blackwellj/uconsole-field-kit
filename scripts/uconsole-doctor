@@ -35,7 +35,7 @@ for command in meshtastic gpspipe rtl_433 rtl_test node-red; do
     fi
 done
 
-for service in uconsole-aio-boot.service uconsole-power-button.service mesh-dash.service; do
+for service in aiov2-rails-boot.service uconsole-power-button.service mesh-dash.service; do
     if systemctl is-enabled "$service" >/dev/null 2>&1; then
         pass "$service enabled"
     else

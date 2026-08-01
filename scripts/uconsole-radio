@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# aiov2_ctl's set_feature("LORA", on) automatically starts/restarts
+# meshtasticd, and set_feature("LORA", off) stops it.  That implicit
+# coupling means we cannot use "aiov2_ctl LORA on" just to energise the
+# radio for MeshCore — it would drag meshtasticd up and fight us.
+#
+# Instead we control the LoRa GPIO pin directly via pinctrl (the same
+# tool aiov2_ctl uses internally) and manage systemd services ourselves.
+
+LORA_PIN=16
+
 stop_unit_if_present() {
     local unit="$1"
     if systemctl list-unit-files "$unit" >/dev/null 2>&1; then
@@ -20,12 +30,29 @@ start_first_unit() {
     return 1
 }
 
-lora_on() {
-    command -v aiov2_ctl >/dev/null 2>&1 && aiov2_ctl LORA on || true
+lora_power_on() {
+    if command -v aiov2_ctl >/dev/null 2>&1; then
+        # Tell aiov2_ctl not to autostart meshtasticd, then power the rail.
+        aiov2_ctl --mesh-off-boot >/dev/null 2>&1 || true
+    fi
+    if command -v pinctrl >/dev/null 2>&1; then
+        pinctrl set "$LORA_PIN" op dh
+    elif command -v aiov2_ctl >/dev/null 2>&1; then
+        # Fallback: aiov2_ctl LORA on, but it may start meshtasticd.
+        # We stop meshtasticd immediately after if we're not in meshtastic mode.
+        aiov2_ctl LORA on || true
+    else
+        echo "Neither pinctrl nor aiov2_ctl available — cannot power LoRa." >&2
+        return 1
+    fi
 }
 
-lora_off() {
-    command -v aiov2_ctl >/dev/null 2>&1 && aiov2_ctl LORA off || true
+lora_power_off() {
+    if command -v pinctrl >/dev/null 2>&1; then
+        pinctrl set "$LORA_PIN" op dl
+    elif command -v aiov2_ctl >/dev/null 2>&1; then
+        aiov2_ctl LORA off || true
+    fi
 }
 
 stop_all() {
@@ -38,8 +65,10 @@ stop_all() {
 case "${1:-status}" in
     meshtastic)
         stop_all
-        lora_on
-        if start_first_unit meshtasticd.service; then
+        lora_power_on
+        # Re-enable and start meshtasticd explicitly.
+        if systemctl list-unit-files meshtasticd.service >/dev/null 2>&1; then
+            systemctl enable --now meshtasticd.service
             echo "Meshtastic mode enabled."
         else
             echo "meshtasticd is not installed. Meshtastic CLI remains available." >&2
@@ -48,7 +77,7 @@ case "${1:-status}" in
         ;;
     meshcore)
         stop_all
-        lora_on
+        lora_power_on
         if start_first_unit meshcore.service meshcore-uconsole.service meshcore-gui.service; then
             echo "MeshCore mode enabled."
         else
@@ -58,15 +87,17 @@ case "${1:-status}" in
         ;;
     off)
         stop_all
-        lora_off
+        lora_power_off
         echo "LoRa services and LoRa power disabled."
         ;;
     status)
         echo "LoRa power:"
         if command -v aiov2_ctl >/dev/null 2>&1; then
             aiov2_ctl --status || true
+        elif command -v pinctrl >/dev/null 2>&1; then
+            pinctrl get "$LORA_PIN"
         else
-            echo "aiov2_ctl not installed"
+            echo "aiov2_ctl and pinctrl not installed"
         fi
         echo
         echo "Mesh services:"
