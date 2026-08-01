@@ -342,7 +342,8 @@ aiov2_ctl --sync-rtc || log "  RTC sync failed (non-fatal — may need NTP first
 # Enable services
 systemctl daemon-reload
 systemctl enable uconsole-power-button.service
-systemctl restart systemd-logind || true
+# Don't restart logind mid-install — it kills the user's graphical session.
+# The logind drop-in will be picked up on next reboot.
 
 log "  GPS NTP (chrony + gpsd) configured. RTC synced."
 
