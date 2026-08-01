@@ -95,9 +95,9 @@ if command_exists rpi-eeprom-config; then
         printf '\nBOOT_ORDER=0xf641\n' >> "$TMP_CONFIG"
     fi
     if grep -q '^POWER_OFF_ON_HALT=' "$TMP_CONFIG"; then
-        sed -i 's/^POWER_OFF_ON_HALT=.*/POWER_OFF_ON_HALT=1/' "$TMP_CONFIG"
+        sed -i 's/^POWER_OFF_ON_HALT=.*/POWER_OFF_ON_HALT=0/' "$TMP_CONFIG"
     else
-        printf 'POWER_OFF_ON_HALT=1\n' >> "$TMP_CONFIG"
+        printf 'POWER_OFF_ON_HALT=0\n' >> "$TMP_CONFIG"
     fi
     rpi-eeprom-config --apply "$TMP_CONFIG"
     rm -f "$TMP_CONFIG"
