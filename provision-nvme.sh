@@ -90,9 +90,9 @@ if command_exists rpi-eeprom-config; then
     TMP_CONFIG="$(mktemp)"
     rpi-eeprom-config > "$TMP_CONFIG"
     if grep -q '^BOOT_ORDER=' "$TMP_CONFIG"; then
-        sed -i 's/^BOOT_ORDER=.*/BOOT_ORDER=0xf461/' "$TMP_CONFIG"
+        sed -i 's/^BOOT_ORDER=.*/BOOT_ORDER=0xf641/' "$TMP_CONFIG"
     else
-        printf '\nBOOT_ORDER=0xf461\n' >> "$TMP_CONFIG"
+        printf '\nBOOT_ORDER=0xf641\n' >> "$TMP_CONFIG"
     fi
     if grep -q '^POWER_OFF_ON_HALT=' "$TMP_CONFIG"; then
         sed -i 's/^POWER_OFF_ON_HALT=.*/POWER_OFF_ON_HALT=1/' "$TMP_CONFIG"
@@ -101,7 +101,7 @@ if command_exists rpi-eeprom-config; then
     fi
     rpi-eeprom-config --apply "$TMP_CONFIG"
     rm -f "$TMP_CONFIG"
-    log "CM5 EEPROM configured for SD, NVMe, USB, then network boot."
+    log "CM5 EEPROM configured for SD, USB, then NVMe boot (BOOT_ORDER=0xf641)."
 else
     log "rpi-eeprom-config is unavailable. The NVMe clone is complete, but boot order was not changed."
 fi
