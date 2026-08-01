@@ -267,13 +267,34 @@ log "[9/12] Installing power button daemon and display handler..."
 
 install -m 0755 "$SCRIPT_DIR/scripts/uconsole-display" /usr/local/bin/uconsole-display
 install -m 0755 "$SCRIPT_DIR/scripts/power-button-daemon.py" /usr/local/sbin/uconsole-power-button-daemon
+install -m 0755 "$SCRIPT_DIR/scripts/power-button-watchdog.py" /usr/local/sbin/uconsole-power-watchdog
 install -m 0644 "$SCRIPT_DIR/systemd/uconsole-power-button.service" /etc/systemd/system/uconsole-power-button.service
 mkdir -p /etc/systemd/logind.conf.d
 cat > /etc/systemd/logind.conf.d/90-uconsole-power-button.conf <<'EOF'
 [Login]
 HandlePowerKey=ignore
 HandlePowerKeyLongPress=poweroff
+HandleLidSwitch=ignore
+HandleLidSwitchExternalMonitors=ignore
 EOF
+
+# Safety net: if the power button daemon crashes, a systemd watchdog
+# force-powers-off after 10 seconds of the power button being held.
+# This runs at kernel level, independent of logind or the daemon.
+cat > /etc/systemd/system/uconsole-power-watchdog.service <<'UNIT'
+[Unit]
+Description=uConsole power button hardware watchdog
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/uconsole-power-watchdog
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNIT
 
 log "  Power button daemon installed (short press = display toggle, long press = poweroff)."
 
@@ -342,6 +363,7 @@ aiov2_ctl --sync-rtc || log "  RTC sync failed (non-fatal — may need NTP first
 # Enable services
 systemctl daemon-reload
 systemctl enable uconsole-power-button.service
+systemctl enable uconsole-power-watchdog.service
 # Don't restart logind mid-install — it kills the user's graphical session.
 # The logind drop-in will be picked up on next reboot.
 
