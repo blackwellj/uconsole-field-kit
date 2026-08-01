@@ -37,7 +37,7 @@ echo
 # ----------------------------------------------------------------------------
 # Phase 1 — Base system packages
 # ----------------------------------------------------------------------------
-log "[1/12] Updating system and installing base packages..."
+log "[1/13] Updating system and installing base packages..."
 
 apt-get update
 apt-get full-upgrade -y
@@ -75,7 +75,7 @@ log "  Base packages installed."
 # ----------------------------------------------------------------------------
 # Phase 2 — aiov2_ctl (GPIO control + boot-rail service)
 # ----------------------------------------------------------------------------
-log "[2/12] Installing aiov2_ctl..."
+log "[2/13] Installing aiov2_ctl..."
 
 if apt-cache show hackergadgets-uconsole-aio-board >/dev/null 2>&1; then
     apt_install hackergadgets-uconsole-aio-board
@@ -94,7 +94,7 @@ log "  aiov2_ctl installed and boot rails configured."
 # ----------------------------------------------------------------------------
 # Phase 3 — HackerGadgets AIO companion apps
 # ----------------------------------------------------------------------------
-log "[3/12] Installing HackerGadgets AIO companion apps..."
+log "[3/13] Installing HackerGadgets AIO companion apps..."
 
 aiov2_ctl --add-apps || log "  Companion app installation failed (non-fatal). Some apps may need manual install."
 
@@ -106,7 +106,7 @@ log "  Companion apps installed (sdrpp-brown, meshtastic-mui, tar1090, pygpsclie
 # ----------------------------------------------------------------------------
 # Phase 4 — SSH and VNC
 # ----------------------------------------------------------------------------
-log "[4/12] Enabling SSH and VNC..."
+log "[4/13] Enabling SSH and VNC..."
 
 # SSH
 systemctl enable --now ssh
@@ -143,11 +143,13 @@ log "  SSH enabled (port 22). VNC enabled (port 5900, shares physical display)."
 # ----------------------------------------------------------------------------
 # Phase 5 — Meshtastic CLI, daemon, and Contact TUI
 # ----------------------------------------------------------------------------
-log "[5/12] Installing Meshtastic CLI, meshtasticd, and Contact TUI..."
+log "[5/13] Installing Meshtastic CLI, meshtasticd, Contact TUI, and MeshCore TUI..."
 
 sudo -u "$USER_NAME" env HOME="$USER_HOME" pipx ensurepath || true
 sudo -u "$USER_NAME" env HOME="$USER_HOME" pipx install --force meshtastic
 sudo -u "$USER_NAME" env HOME="$USER_HOME" pipx install contact
+# MeshCore TUI (guax/tui-meshcore) — terminal chat client for MeshCore
+sudo -u "$USER_NAME" env HOME="$USER_HOME" pipx install tui-meshcore || log "  tui-meshcore not on PyPI — try: pipx install git+https://github.com/guax/tui-meshcore.git"
 
 if apt-cache show meshtasticd >/dev/null 2>&1; then
     apt_install meshtasticd
@@ -156,12 +158,12 @@ else
     log "  meshtasticd not in apt repos — CLI only."
 fi
 
-log "  Meshtastic CLI, meshtasticd, and Contact TUI installed."
+log "  Meshtastic CLI, meshtasticd, Contact TUI, and MeshCore TUI installed."
 
 # ----------------------------------------------------------------------------
 # Phase 6 — MeshCore
 # ----------------------------------------------------------------------------
-log "[6/12] Installing MeshCore uConsole integration..."
+log "[6/13] Installing MeshCore uConsole integration..."
 
 rm -rf /opt/meshcore-uconsole
 git clone --depth 1 --branch "$MESHCORE_BRANCH" "$MESHCORE_REPOSITORY" /opt/meshcore-uconsole
@@ -180,7 +182,7 @@ log "  MeshCore installed."
 # ----------------------------------------------------------------------------
 # Phase 7 — MeshDash
 # ----------------------------------------------------------------------------
-log "[7/12] Installing MeshDash $MESHDASH_VERSION..."
+log "[7/13] Installing MeshDash $MESHDASH_VERSION..."
 
 rm -rf /opt/meshdash
 mkdir -p /opt/meshdash
@@ -208,23 +210,42 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# Phase 8 — iNTERCEPT (SIGINT platform)
+# Phase 8 — iNTERCEPT (SIGINT platform — Full install)
 # ----------------------------------------------------------------------------
-log "[8/12] Installing iNTERCEPT..."
+log "[8/13] Installing iNTERCEPT (Full SIGINT)..."
+
+# Extra deps noted from the forum thread
+apt_install python3-skyfield || log "  python3-skyfield not available (satellite features may be limited)."
 
 rm -rf /opt/intercept
 git clone --depth 1 https://github.com/smittix/intercept.git /opt/intercept
 cd /opt/intercept
-./setup.sh --non-interactive || log "  iNTERCEPT setup.sh failed (non-fatal). Manual setup may be needed: cd /opt/intercept && ./setup.sh"
+# Interactive setup — choose "Full SIGINT" profile when prompted.
+# This installs all decoders: pager, 433MHz, ADS-B, ACARS, VDL2, AIS,
+# APRS, weather satellites, SSTV, WeFax, WiFi, Bluetooth, GPS, and more.
+./setup.sh || log "  iNTERCEPT setup.sh failed. Manual setup: cd /opt/intercept && ./setup.sh"
 cd "$SCRIPT_DIR"
 chown -R "$USER_NAME:$USER_NAME" /opt/intercept
 
-log "  iNTERCEPT installed (web UI at http://localhost:5050)."
+log "  iNTERCEPT installed (Full SIGINT, web UI at http://localhost:5050)."
 
 # ----------------------------------------------------------------------------
-# Phase 9 — Power button daemon + display handler
+# Phase 9 — rpitx-ui (RF transmitter)
 # ----------------------------------------------------------------------------
-log "[9/12] Installing power button daemon and display handler..."
+log "[9/13] Installing rpitx-ui (RF transmitter)..."
+
+rm -rf /opt/rpitx-ui
+git clone --depth 1 https://github.com/IgrikXD/rpitx-ui.git /opt/rpitx-ui
+cd /opt/rpitx-ui
+./install.sh || log "  rpitx-ui install.sh failed. Manual build: cd /opt/rpitx-ui && mkdir build && cd build && cmake .. && make -j\$(nproc) && sudo make install"
+cd "$SCRIPT_DIR"
+
+log "  rpitx-ui installed (run with: rpitx-ui). FM, SSB, CW, SSTV, FT8, RDS transmit via AIO RF output."
+
+# ----------------------------------------------------------------------------
+# Phase 10 — Power button daemon + display handler
+# ----------------------------------------------------------------------------
+log "[10/13] Installing power button daemon and display handler..."
 
 install -m 0755 "$SCRIPT_DIR/scripts/uconsole-display" /usr/local/bin/uconsole-display
 install -m 0755 "$SCRIPT_DIR/scripts/power-button-daemon.py" /usr/local/sbin/uconsole-power-button-daemon
@@ -239,9 +260,9 @@ EOF
 log "  Power button daemon installed (short press = display toggle, long press = poweroff)."
 
 # ----------------------------------------------------------------------------
-# Phase 10 — Mesh mode switcher, diagnostics, and config
+# Phase 11 — Mesh mode switcher, diagnostics, and config
 # ----------------------------------------------------------------------------
-log "[10/12] Installing mesh switcher, diagnostics, and field launcher..."
+log "[11/13] Installing mesh switcher, diagnostics, and field launcher..."
 
 install -m 0755 "$SCRIPT_DIR/scripts/uconsole-radio" /usr/local/bin/uconsole-radio
 install -m 0755 "$SCRIPT_DIR/scripts/uconsole-doctor" /usr/local/bin/uconsole-doctor
@@ -265,9 +286,9 @@ log "  Mesh switcher, diagnostics, and field launcher installed."
 log "  Field launcher will auto-start on login."
 
 # ----------------------------------------------------------------------------
-# Phase 11 — GPS NTP (chrony + gpsd), RTC sync, systemd enable
+# Phase 12 — GPS NTP (chrony + gpsd), RTC sync, systemd enable
 # ----------------------------------------------------------------------------
-log "[11/12] Configuring GPS NTP, RTC, and enabling services..."
+log "[12/13] Configuring GPS NTP, RTC, and enabling services..."
 
 # Configure gpsd for the AIO GPS module
 cat > /etc/default/gpsd <<'EOF'
@@ -308,9 +329,9 @@ systemctl restart systemd-logind || true
 log "  GPS NTP (chrony + gpsd) configured. RTC synced."
 
 # ----------------------------------------------------------------------------
-# Phase 12 — Final summary and diagnostics
+# Phase 13 — Final summary and diagnostics
 # ----------------------------------------------------------------------------
-log "[12/12] Finalising..."
+log "[13/13] Finalising..."
 
 # Set default mesh mode
 case "$DEFAULT_MESH_MODE" in
@@ -331,6 +352,7 @@ echo " SSH:   ssh $USER_NAME@<uconsole-ip>"
 echo " VNC:   <uconsole-ip>:5900  (password in /etc/x11vnc.pass)"
 echo " MeshDash:    http://localhost:8000/setup"
 echo " iNTERCEPT:   http://localhost:5050  (start with: cd /opt/intercept && sudo ./start.sh)"
+echo " rpitx-ui:    rpitx-ui  (FM/SSB/CW/SSTV/FT8 transmit via AIO RF output)"
 echo " Field Launcher: auto-starts on login (run 'field-launcher' to restart)"
 echo
 echo " Commands:"
@@ -338,7 +360,9 @@ echo "   uconsole-doctor        — system diagnostics"
 echo "   uconsole-radio status   — mesh status"
 echo "   aiov2_ctl --status       — AIO board + battery status"
 echo "   contact --port /dev/ttyUSB0  — Meshtastic TUI"
-echo "   field-launcher           — restart the launcher UI"
+echo "   tui-meshcore                — MeshCore TUI"
+echo "   rpitx-ui                    — RF transmitter UI"
+echo "   field-launcher              — restart the launcher UI"
 echo
 echo " VNC password:  $(cat /etc/x11vnc.pass 2>/dev/null | head -c 12 || echo 'see /etc/x11vnc.pass')"
 echo

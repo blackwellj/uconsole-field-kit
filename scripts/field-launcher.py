@@ -380,6 +380,10 @@ class FieldLauncher(QMainWindow):
         btn_contact.clicked.connect(self._launch_contact)
         panel.addWidget(btn_contact)
 
+        btn_mc_tui = styled_button("MeshCore TUI", ACCENT_PURPLE)
+        btn_mc_tui.clicked.connect(self._launch_meshcore_tui)
+        panel.addWidget(btn_mc_tui)
+
         btn_meshdash = styled_button("MeshDash", ACCENT_CYAN)
         btn_meshdash.clicked.connect(lambda: launch_browser("http://localhost:8000"))
         panel.addWidget(btn_meshdash)
@@ -413,6 +417,10 @@ class FieldLauncher(QMainWindow):
         btn_wsjtx = styled_button("WSJT-X", ACCENT_YELLOW)
         btn_wsjtx.clicked.connect(self._launch_wsjtx)
         flay.addWidget(btn_wsjtx)
+
+        btn_rpitx = styled_button("rpitx-ui", ACCENT_RED)
+        btn_rpitx.clicked.connect(self._launch_rpitx)
+        flay.addWidget(btn_rpitx)
 
         panel.addWidget(frame)
 
@@ -539,6 +547,20 @@ class FieldLauncher(QMainWindow):
             launch("wsjtx &")
         else:
             launch_terminal("echo 'WSJT-X not installed. Run: sudo apt install wsjtx'")
+
+    def _launch_rpitx(self) -> None:
+        if shutil_which("rpitx-ui"):
+            launch("sudo rpitx-ui &")
+        elif Path("/opt/rpitx-ui").exists():
+            launch_terminal("cd /opt/rpitx-ui && sudo rpitx-ui")
+        else:
+            launch_terminal("echo 'rpitx-ui not installed. Run: cd /opt/rpitx-ui && ./install.sh'")
+
+    def _launch_meshcore_tui(self) -> None:
+        if shutil_which("tui-meshcore"):
+            launch_terminal("tui-meshcore")
+        else:
+            launch_terminal("pipx install git+https://github.com/guax/tui-meshcore.git && tui-meshcore")
 
     def _sync_rtc(self) -> None:
         launch_terminal("sudo aiov2_ctl --sync-rtc && echo 'RTC synced.' && sleep 2")
