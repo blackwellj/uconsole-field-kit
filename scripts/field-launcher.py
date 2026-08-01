@@ -4,17 +4,18 @@ uConsole Marine Console — modern dark dashboard for the uConsole CM5.
 
 Sidebar navigation, card-based layout, real-time status bar.
 Designed for 1280x720.  Borderless, dark navy theme.
+One SDR — decode modes switch via iNTERCEPT.
 """
 
 from __future__ import annotations
 import os, subprocess, sys, time
 from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer, QSize
-from PyQt6.QtGui import QFont, QColor, QPalette, QAction
+from PyQt6.QtGui import QFont, QColor, QPalette
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QPushButton, QLabel, QFrame, QSizePolicy,
-    QStackedWidget, QScrollArea, QSpacerItem,
+    QStackedWidget, QScrollArea,
 )
 
 # ---------------------------------------------------------------------------
@@ -39,10 +40,7 @@ def launch(cmd: str) -> None:
 def launch_terminal(cmd: str = "") -> None:
     for term in ("xfce4-terminal", "x-terminal-emulator", "qterminal", "xterm"):
         if which(term):
-            if cmd:
-                full = f"{term} -e bash -c '{cmd}; exec bash'"
-            else:
-                full = term
+            full = f"{term} -e bash -c '{cmd}; exec bash'" if cmd else term
             launch(full)
             return
 
@@ -117,21 +115,6 @@ def get_kb_backlight() -> bool:
             return int(sh(f"cat {path}") or "0") > 0
     return False
 
-def get_vnc_status() -> str:
-    return "ON" if sh("systemctl is-active x11vnc 2>/dev/null") == "active" else "OFF"
-
-def get_gps_fix() -> str:
-    """Try to get a GPS fix string from gpsd."""
-    out = sh("cgps -s 2>/dev/null | head -5", timeout=3)
-    if out:
-        for line in out.splitlines():
-            if "latitude" in line.lower() or "lat" in line.lower():
-                return line.strip()
-    # Fallback: check if gpsd has a fix
-    if sh("systemctl is-active gpsd 2>/dev/null") == "active":
-        return "GPSd active"
-    return "No fix"
-
 # ---------------------------------------------------------------------------
 # Theme
 # ---------------------------------------------------------------------------
@@ -151,107 +134,81 @@ DIM      = "#506070"
 FONT     = "DejaVu Sans"
 MONO     = "DejaVu Sans Mono"
 
+# Font sizes — bigger for 5" screen readability
+FS_TITLE  = 11   # card section titles
+FS_BODY   = 11   # body text / data labels
+FS_BTN    = 12   # buttons
+FS_NAV    = 22   # sidebar icons
+FS_STATUS = 10   # status pills
+FS_BIG   = 14   # prominent buttons
+
 # ---------------------------------------------------------------------------
 # UI builders
 # ---------------------------------------------------------------------------
-
 def card_frame(title: str = "", color: str = CYAN) -> tuple[QFrame, QVBoxLayout]:
-    """Create a card with a title bar. Returns (frame, content_layout)."""
     frame = QFrame()
-    frame.setStyleSheet(f"""
-        QFrame {{
-            background-color: {CARD};
-            border: 1px solid {BORDER};
-            border-radius: 8px;
-        }}
-    """)
+    frame.setStyleSheet(f"QFrame {{ background-color: {CARD}; border: 1px solid {BORDER}; border-radius: 8px; }}")
     lay = QVBoxLayout(frame)
-    lay.setContentsMargins(10, 8, 10, 8)
-    lay.setSpacing(4)
-
+    lay.setContentsMargins(12, 10, 12, 10)
+    lay.setSpacing(6)
     if title:
         lbl = QLabel(title.upper())
-        lbl.setFont(QFont(FONT, 8, QFont.Weight.Bold))
+        lbl.setFont(QFont(FONT, FS_TITLE, QFont.Weight.Bold))
         lbl.setStyleSheet(f"color: {color}; letter-spacing: 1px; padding-bottom: 4px; border: none;")
         lay.addWidget(lbl)
-        # Separator line
         line = QFrame()
         line.setFixedHeight(1)
         line.setStyleSheet(f"background-color: {BORDER}; border: none;")
         lay.addWidget(line)
-
     return frame, lay
 
 def status_pill(text: str, color: str) -> QLabel:
     lbl = QLabel(text)
-    lbl.setFont(QFont(FONT, 8, QFont.Weight.Bold))
-    lbl.setStyleSheet(f"""
-        QLabel {{
-            background-color: {color}18; color: {color};
-            border: 1px solid {color}50; border-radius: 10px;
-            padding: 2px 8px; border: none;
-        }}
-    """)
+    lbl.setFont(QFont(FONT, FS_STATUS, QFont.Weight.Bold))
+    lbl.setStyleSheet(f"QLabel {{ background-color: {color}18; color: {color}; border: 1px solid {color}50; border-radius: 10px; padding: 3px 10px; }}")
     return lbl
 
-def action_btn(text: str, color: str = CYAN, h: int = 42, fs: int = 10) -> QPushButton:
+def action_btn(text: str, color: str = CYAN, h: int = 48, fs: int = FS_BTN) -> QPushButton:
     btn = QPushButton(text)
     btn.setFixedHeight(h)
     btn.setFont(QFont(FONT, fs, QFont.Weight.Bold))
     btn.setStyleSheet(f"""
         QPushButton {{
             background-color: {PANEL}; color: {color};
-            border: 1px solid {color}50; border-radius: 6px;
-            padding: 4px 10px;
+            border: 1px solid {color}50; border-radius: 6px; padding: 6px 12px;
         }}
-        QPushButton:hover {{
-            background-color: {color}20; border: 1px solid {color};
-        }}
-        QPushButton:pressed {{
-            background-color: {color}; color: {BG};
-        }}
+        QPushButton:hover {{ background-color: {color}20; border: 1px solid {color}; }}
+        QPushButton:pressed {{ background-color: {color}; color: {BG}; }}
     """)
     btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     return btn
 
-def toggle_btn(name: str, is_on: bool, h: int = 44) -> QPushButton:
+def toggle_btn(name: str, is_on: bool, h: int = 48) -> QPushButton:
     c = GREEN if is_on else RED
     btn = QPushButton(f"{name}  {'●' if is_on else '○'}")
     btn.setFixedHeight(h)
-    btn.setFont(QFont(FONT, 9, QFont.Weight.Bold))
+    btn.setFont(QFont(FONT, FS_BTN, QFont.Weight.Bold))
     btn.setStyleSheet(f"""
-        QPushButton {{
-            background-color: {c}18; color: {c};
-            border: 1px solid {c}80; border-radius: 6px;
-        }}
+        QPushButton {{ background-color: {c}18; color: {c}; border: 1px solid {c}80; border-radius: 6px; }}
         QPushButton:hover {{ background-color: {c}30; }}
         QPushButton:pressed {{ background-color: {c}; color: {BG}; }}
     """)
     btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     return btn
 
-def sidebar_btn(text: str, color: str = WHITE) -> QPushButton:
+def sidebar_btn(text: str) -> QPushButton:
     btn = QPushButton(text)
-    btn.setFixedSize(56, 56)
-    btn.setFont(QFont(FONT, 16, QFont.Weight.Bold))
+    btn.setFixedSize(64, 64)
+    btn.setFont(QFont(FONT, FS_NAV, QFont.Weight.Bold))
     btn.setStyleSheet(f"""
-        QPushButton {{
-            background-color: transparent; color: {DIM};
-            border: none; border-radius: 12px;
-            text-align: center;
-        }}
-        QPushButton:hover {{
-            background-color: {CYAN}15; color: {WHITE};
-        }}
-        QPushButton:checked {{
-            background-color: {CYAN}25; color: {CYAN};
-            border: 1px solid {CYAN}80;
-        }}
+        QPushButton {{ background-color: transparent; color: {DIM}; border: none; border-radius: 14px; }}
+        QPushButton:hover {{ background-color: {CYAN}15; color: {WHITE}; }}
+        QPushButton:checked {{ background-color: {CYAN}25; color: {CYAN}; border: 1px solid {CYAN}80; }}
     """)
     btn.setCheckable(True)
     return btn
 
-def data_label(text: str, color: str = WHITE, mono: bool = False, size: int = 9) -> QLabel:
+def data_label(text: str, color: str = WHITE, mono: bool = False, size: int = FS_BODY) -> QLabel:
     lbl = QLabel(text)
     f = MONO if mono else FONT
     lbl.setFont(QFont(f, size))
@@ -259,10 +216,17 @@ def data_label(text: str, color: str = WHITE, mono: bool = False, size: int = 9)
     lbl.setWordWrap(True)
     return lbl
 
+def nav_label(text: str) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setFixedHeight(16)
+    lbl.setFont(QFont(FONT, 7))
+    lbl.setStyleSheet(f"color: {DIM}; border: none;")
+    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    return lbl
+
 # ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
-
 class MarineConsole(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -271,7 +235,6 @@ class MarineConsole(QMainWindow):
         self.resize(1280, 720)
         self.aio_states = {}
         self._building = False
-
         self._build_ui()
         self._start_timers()
 
@@ -279,20 +242,14 @@ class MarineConsole(QMainWindow):
         central = QWidget()
         central.setStyleSheet(f"background-color: {BG};")
         self.setCentralWidget(central)
-
         root = QHBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-
-        # Sidebar
         root.addLayout(self._build_sidebar())
-
-        # Right side: status bar + stacked content
         right = QVBoxLayout()
         right.setContentsMargins(0, 0, 0, 0)
         right.setSpacing(0)
         right.addLayout(self._build_status_bar())
-
         self.stack = QStackedWidget()
         self.stack.setStyleSheet(f"background-color: {BG};")
         self.stack.addWidget(self._page_dashboard())
@@ -301,32 +258,32 @@ class MarineConsole(QMainWindow):
         self.stack.addWidget(self._page_mesh())
         self.stack.addWidget(self._page_system())
         right.addWidget(self.stack, 1)
-
         root.addLayout(right, 1)
 
     # ---- Sidebar ----
     def _build_sidebar(self) -> QVBoxLayout:
-        bar = QVBoxLayout()
-        bar.setContentsMargins(8, 10, 8, 10)
-        bar.setSpacing(6)
+        wrap = QFrame()
+        wrap.setStyleSheet(f"background-color: {SIDEBAR}; border-right: 1px solid {BORDER};")
+        wrap.setFixedWidth(84)
+        bar = QVBoxLayout(wrap)
+        bar.setContentsMargins(10, 12, 10, 12)
+        bar.setSpacing(4)
         bar.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        # Logo
         logo = QLabel("◆")
-        logo.setFixedHeight(48)
-        logo.setFont(QFont(FONT, 18, QFont.Weight.Black))
-        logo.setStyleSheet(f"color: {CYAN}; border: none; padding-left: 16px;")
+        logo.setFixedHeight(56)
+        logo.setFont(QFont(FONT, 22, QFont.Weight.Black))
+        logo.setStyleSheet(f"color: {CYAN}; border: none;")
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         bar.addWidget(logo)
 
-        # Nav buttons
         self.nav_buttons = {}
         pages = [
-            ("dashboard", "🏠", "Dashboard"),
-            ("marine", "⚓", "Marine"),
-            ("radio", "📡", "Radio/SDR"),
-            ("mesh", "📻", "Mesh"),
-            ("system", "⚙", "System"),
+            ("dashboard", "⌂", "Dash"),
+            ("marine",    "⚓", "Marine"),
+            ("radio",      "📡", "SDR"),
+            ("mesh",       "📻", "Mesh"),
+            ("system",     "⚙", "System"),
         ]
         for key, icon, label in pages:
             btn = sidebar_btn(icon)
@@ -334,42 +291,18 @@ class MarineConsole(QMainWindow):
             btn.clicked.connect(lambda _, k=key: self._switch_page(k))
             bar.addWidget(btn)
             self.nav_buttons[key] = btn
-            # Small label
-            lbl = QLabel(label)
-            lbl.setFixedHeight(14)
-            lbl.setFont(QFont(FONT, 6))
-            lbl.setStyleSheet(f"color: {DIM}; border: none;")
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            bar.addWidget(lbl)
+            bar.addWidget(nav_label(label))
 
         bar.addStretch()
 
-        # Exit button at bottom
         btn_exit = QPushButton("✕")
-        btn_exit.setFixedSize(56, 56)
-        btn_exit.setFont(QFont(FONT, 16, QFont.Weight.Bold))
-        btn_exit.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent; color: {RED}80;
-                border: none; border-radius: 12px;
-            }}
-            QPushButton:hover {{ background-color: {RED}20; color: {RED}; }}
-        """)
+        btn_exit.setFixedSize(64, 64)
+        btn_exit.setFont(QFont(FONT, FS_NAV, QFont.Weight.Bold))
+        btn_exit.setStyleSheet(f"QPushButton {{ background-color: transparent; color: {RED}80; border: none; border-radius: 14px; }} QPushButton:hover {{ background-color: {RED}20; color: {RED}; }}")
         btn_exit.setToolTip("Exit to Desktop")
         btn_exit.clicked.connect(self.close)
         bar.addWidget(btn_exit)
-        lbl_exit = QLabel("Exit")
-        lbl_exit.setFixedHeight(14)
-        lbl_exit.setFont(QFont(FONT, 6))
-        lbl_exit.setStyleSheet(f"color: {DIM}; border: none;")
-        lbl_exit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        bar.addWidget(lbl_exit)
-
-        # Wrap in frame
-        wrap = QFrame()
-        wrap.setStyleSheet(f"background-color: {SIDEBAR}; border-right: 1px solid {BORDER};")
-        wrap.setLayout(bar)
-        wrap.setFixedWidth(76)
+        bar.addWidget(nav_label("Exit"))
 
         outer = QVBoxLayout()
         outer.setContentsMargins(0, 0, 0, 0)
@@ -377,69 +310,88 @@ class MarineConsole(QMainWindow):
         return outer
 
     def _switch_page(self, key: str) -> None:
-        self.stack.setCurrentIndex(["dashboard", "marine", "radio", "mesh", "system"].index(key))
+        idx = ["dashboard", "marine", "radio", "mesh", "system"].index(key)
+        self.stack.setCurrentIndex(idx)
         for k, btn in self.nav_buttons.items():
             btn.setChecked(k == key)
 
     # ---- Status bar ----
     def _build_status_bar(self) -> QHBoxLayout:
         bar = QHBoxLayout()
-        bar.setContentsMargins(12, 6, 12, 6)
-        bar.setSpacing(8)
-
+        bar.setContentsMargins(16, 8, 16, 8)
+        bar.setSpacing(10)
         title = QLabel("MARINE CONSOLE")
-        title.setFont(QFont(FONT, 9, QFont.Weight.Black))
+        title.setFont(QFont(FONT, FS_TITLE, QFont.Weight.Black))
         title.setStyleSheet(f"color: {CYAN}; letter-spacing: 2px; border: none;")
         bar.addWidget(title)
-
         bar.addStretch()
-
-        self.lbl_bat = status_pill("BAT ?%", GREEN)
-        self.lbl_pwr = status_pill("PWR ?", ORANGE)
-        self.lbl_gps = status_pill("GPS —", GREEN)
+        self.lbl_bat  = status_pill("BAT ?%", GREEN)
+        self.lbl_pwr  = status_pill("PWR ?", ORANGE)
+        self.lbl_gps  = status_pill("GPS —", RED)
         self.lbl_wifi = status_pill("WiFi —", CYAN)
         self.lbl_mesh = status_pill("MESH Off", RED)
-        self.lbl_clk = status_pill("--:--", DIM)
-
+        self.lbl_clk  = status_pill("--:--", DIM)
         for w in (self.lbl_bat, self.lbl_pwr, self.lbl_gps, self.lbl_wifi, self.lbl_mesh, self.lbl_clk):
             bar.addWidget(w)
-
         return bar
 
     # ---- Page: Dashboard ----
     def _page_dashboard(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(12, 8, 12, 8)
-        lay.setSpacing(8)
-
-        # 2x2 grid
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setSpacing(10)
         grid = QGridLayout()
-        grid.setSpacing(8)
+        grid.setSpacing(10)
 
-        # AIS card
-        card_ais, ais_lay = card_frame("AIS Vessels", CYAN)
-        self.dash_ais = data_label("Waiting for AIS data...", DIM, True, 9)
-        ais_lay.addWidget(self.dash_ais)
-        grid.addWidget(card_ais, 0, 0)
+        # SDR status card — the one SDR can only do one thing at a time
+        card_sdr, sdr_lay = card_frame("SDR Status (1× RTL-SDR)", CYAN)
+        self.dash_sdr = data_label(
+            "SDR is OFF — turn on in Mesh tab\n\n"
+            "One SDR = one decode mode at a time:\n"
+            "• AIS vessel tracking (162 MHz)\n"
+            "• DSC distress (156.525 MHz)\n"
+            "• Pager POCSAG/FLEX\n"
+            "• 433 MHz sensors\n"
+            "• ADS-B aircraft (1090 MHz)\n\n"
+            "Use iNTERCEPT to switch modes.", WHITE, True, FS_BODY
+        )
+        sdr_lay.addWidget(self.dash_sdr)
+        grid.addWidget(card_sdr, 0, 0)
 
-        # DSC card
-        card_dsc, dsc_lay = card_frame("DSC / Distress", ORANGE)
-        self.dash_dsc = data_label("No DSC messages", DIM, True, 9)
-        dsc_lay.addWidget(self.dash_dsc)
-        grid.addWidget(card_dsc, 0, 1)
+        # System card
+        card_sys, sys_lay = card_frame("System", GREEN)
+        self.dash_sys = data_label("Loading...", DIM, True, FS_BODY)
+        sys_lay.addWidget(self.dash_sys)
+        grid.addWidget(card_sys, 0, 1)
 
-        # Pager card
-        card_pgr, pgr_lay = card_frame("Pager / POCSAG", PURPLE)
-        self.dash_pgr = data_label("No pager messages", DIM, True, 9)
-        pgr_lay.addWidget(self.dash_pgr)
-        grid.addWidget(card_pgr, 1, 0)
+        # Quick launch card
+        card_q, q_lay = card_frame("Quick Launch", ORANGE)
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        b1 = action_btn("iNTERCEPT", ORANGE)
+        b1.clicked.connect(self._launch_intercept)
+        row.addWidget(b1)
+        b2 = action_btn("SDR++", CYAN)
+        b2.clicked.connect(self._launch_sdrpp)
+        row.addWidget(b2)
+        q_lay.addLayout(row)
+        row2 = QHBoxLayout()
+        row2.setSpacing(6)
+        b3 = action_btn("WSJT-X", YELLOW)
+        b3.clicked.connect(self._launch_wsjtx)
+        row2.addWidget(b3)
+        b4 = action_btn("Terminal", WHITE)
+        b4.clicked.connect(lambda: launch_terminal())
+        row2.addWidget(b4)
+        q_lay.addLayout(row2)
+        grid.addWidget(card_q, 1, 0)
 
-        # System status card
-        card_sys, sys_lay = card_frame("System Status", GREEN)
-        self.dash_aio = data_label("Loading...", DIM, True, 9)
-        sys_lay.addWidget(self.dash_aio)
-        grid.addWidget(card_sys, 1, 1)
+        # Mesh status card
+        card_m, m_lay = card_frame("Mesh Status", PURPLE)
+        self.dash_mesh = data_label("Loading...", DIM, True, FS_BODY)
+        m_lay.addWidget(self.dash_mesh)
+        grid.addWidget(card_m, 1, 1)
 
         lay.addLayout(grid, 1)
         return page
@@ -448,33 +400,59 @@ class MarineConsole(QMainWindow):
     def _page_marine(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(12, 8, 12, 8)
-        lay.setSpacing(8)
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setSpacing(10)
 
-        # AIS tracking
+        # SDR mode note
+        card_note, note_lay = card_frame("⚠ One SDR Limitation", YELLOW)
+        note_lay.addWidget(data_label(
+            "The uConsole has one RTL-SDR. You can decode AIS, DSC, or Pager —\n"
+            "but only ONE at a time. iNTERCEPT manages the SDR and lets you\n"
+            "switch between decode modes from its web UI (port 5050).",
+            WHITE, False, FS_BODY
+        ))
+        lay.addWidget(card_note)
+
+        # AIS
         card_ais, ais_lay = card_frame("AIS Vessel Tracking", CYAN)
-        self.marine_ais = data_label("Start iNTERCEPT to receive AIS data", DIM, True, 9)
-        ais_lay.addWidget(self.marine_ais)
-        btn_ais = action_btn("Start AIS (iNTERCEPT)", CYAN)
+        ais_lay.addWidget(data_label(
+            "AIS uses 161.975 MHz (Ch 87B) and 162.025 MHz (Ch 88B).\n"
+            "Start iNTERCEPT → AIS mode to track vessels within ~20nm.\n"
+            "Vessels shown on the iNTERCEPT web map with course, speed, MMSI.",
+            WHITE, True, FS_BODY
+        ))
+        btn_ais = action_btn("Start iNTERCEPT (AIS mode)", CYAN, 48, FS_BTN)
         btn_ais.clicked.connect(self._launch_intercept)
         ais_lay.addWidget(btn_ais)
-        lay.addWidget(card_ais, 2)
+        lay.addWidget(card_ais)
 
-        # DSC decoder
+        # DSC
         card_dsc, dsc_lay = card_frame("DSC Distress Channel", ORANGE)
-        self.marine_dsc = data_label("Channel 70 (156.525 MHz)\nDSC decoder available via iNTERCEPT", WHITE, True, 9)
-        dsc_lay.addWidget(self.marine_dsc)
-        btn_dsc = action_btn("Open iNTERCEPT Web UI", ORANGE)
+        dsc_lay.addWidget(data_label(
+            "DSC uses Channel 70 (156.525 MHz).\n"
+            "iNTERCEPT decodes DSC distress, urgency, safety, and routine calls.\n"
+            "Messages shown in iNTERCEPT web UI with MMSI, type, and timestamp.",
+            WHITE, True, FS_BODY
+        ))
+        btn_dsc = action_btn("Open iNTERCEPT Web UI", ORANGE, 48, FS_BTN)
         btn_dsc.clicked.connect(lambda: launch_browser("http://localhost:5050"))
         dsc_lay.addWidget(btn_dsc)
-        lay.addWidget(card_dsc, 2)
+        lay.addWidget(card_dsc)
 
-        # VHF channels
-        card_vhf, vhf_lay = card_frame("VHF Channel Monitor", GREEN)
-        channels = "Ch 16 — 156.800 MHz (Distress)\nCh 70 — 156.525 MHz (DSC)\nCh 13 — 156.650 MHz (Bridge)\nCh 67 — 156.375 MHz (Port)"
-        vhf_lay.addWidget(data_label(channels, WHITE, True, 9))
-        lay.addWidget(card_vhf, 1)
+        # VHF reference
+        card_vhf, vhf_lay = card_frame("VHF Channel Reference", GREEN)
+        vhf_lay.addWidget(data_label(
+            "Ch 16  156.800 MHz  Distress/Safety\n"
+            "Ch 70  156.525 MHz  DSC Digital Selective Calling\n"
+            "Ch 13  156.650 MHz  Bridge-to-bridge\n"
+            "Ch 67  156.375 MHz  Port operations\n"
+            "Ch 87B 161.975 MHz  AIS 1\n"
+            "Ch 88B 162.025 MHz  AIS 2",
+            WHITE, True, FS_BODY
+        ))
+        lay.addWidget(card_vhf)
 
+        lay.addStretch()
         return page
 
     # ---- Page: Radio / SDR ----
@@ -485,40 +463,43 @@ class MarineConsole(QMainWindow):
         inner = QWidget()
         inner.setStyleSheet(f"background-color: {BG};")
         lay = QVBoxLayout(inner)
-        lay.setContentsMargins(12, 8, 12, 8)
-        lay.setSpacing(8)
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setSpacing(10)
 
-        # SIGINT
         card_sig, sig_lay = card_frame("SIGINT Platform", ORANGE)
-        btn1 = action_btn("Start iNTERCEPT", ORANGE, 48, 12)
-        btn1.clicked.connect(self._launch_intercept)
-        sig_lay.addWidget(btn1)
-        btn2 = action_btn("Open iNTERCEPT Web (port 5050)", CYAN)
-        btn2.clicked.connect(lambda: launch_browser("http://localhost:5050"))
-        sig_lay.addWidget(btn2)
+        b1 = action_btn("Start iNTERCEPT", ORANGE, 56, FS_BIG)
+        b1.clicked.connect(self._launch_intercept)
+        sig_lay.addWidget(b1)
+        b2 = action_btn("Open iNTERCEPT Web UI (port 5050)", CYAN, 48, FS_BTN)
+        b2.clicked.connect(lambda: launch_browser("http://localhost:5050"))
+        sig_lay.addWidget(b2)
+        sig_lay.addWidget(data_label(
+            "iNTERCEPT manages the SDR. It can decode:\n"
+            "AIS, DSC, Pager, 433 MHz, ADS-B, ACARS, VDL2, APRS,\n"
+            "Weather Sat, SSTV, WiFi, Bluetooth, GPS, and more.",
+            DIM, False, FS_BODY
+        ))
         lay.addWidget(card_sig)
 
-        # SDR tools
         card_sdr, sdr_lay = card_frame("SDR Tools", CYAN)
         row = QHBoxLayout()
-        row.setSpacing(4)
-        b1 = action_btn("SDR++", CYAN)
-        b1.clicked.connect(self._launch_sdrpp)
-        row.addWidget(b1)
-        b2 = action_btn("tar1090", GREEN)
-        b2.clicked.connect(self._launch_tar1090)
-        row.addWidget(b2)
+        row.setSpacing(6)
+        s1 = action_btn("SDR++", CYAN, 48, FS_BTN)
+        s1.clicked.connect(self._launch_sdrpp)
+        row.addWidget(s1)
+        s2 = action_btn("tar1090 (ADS-B)", GREEN, 48, FS_BTN)
+        s2.clicked.connect(self._launch_tar1090)
+        row.addWidget(s2)
         sdr_lay.addLayout(row)
-        b3 = action_btn("WSJT-X (FT8/FT4)", YELLOW)
-        b3.clicked.connect(self._launch_wsjtx)
-        sdr_lay.addWidget(b3)
+        s3 = action_btn("WSJT-X (FT8/FT4/JT modes)", YELLOW, 48, FS_BTN)
+        s3.clicked.connect(self._launch_wsjtx)
+        sdr_lay.addWidget(s3)
         lay.addWidget(card_sdr)
 
-        # Power monitor
         card_pwr, pwr_lay = card_frame("Power Monitor", ORANGE)
-        b4 = action_btn("Live Power Monitor", ORANGE)
-        b4.clicked.connect(lambda: launch_terminal("aiov2_ctl --power"))
-        pwr_lay.addWidget(b4)
+        p1 = action_btn("Live Power Monitor", ORANGE, 48, FS_BTN)
+        p1.clicked.connect(lambda: launch_terminal("aiov2_ctl --power"))
+        pwr_lay.addWidget(p1)
         lay.addWidget(card_pwr)
 
         lay.addStretch()
@@ -529,52 +510,49 @@ class MarineConsole(QMainWindow):
     def _page_mesh(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(12, 8, 12, 8)
-        lay.setSpacing(8)
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setSpacing(10)
 
-        # Mesh mode
         card_mode, mode_lay = card_frame("Mesh Mode", GREEN)
         row = QHBoxLayout()
-        row.setSpacing(4)
-        b1 = action_btn("Meshtastic", GREEN)
-        b1.clicked.connect(lambda: self._do_action("uconsole-radio meshtastic"))
-        row.addWidget(b1)
-        b2 = action_btn("MeshCore", PURPLE)
-        b2.clicked.connect(lambda: self._do_action("uconsole-radio meshcore"))
-        row.addWidget(b2)
-        b3 = action_btn("Off", RED)
-        b3.clicked.connect(lambda: self._do_action("uconsole-radio off"))
-        row.addWidget(b3)
+        row.setSpacing(6)
+        m1 = action_btn("Meshtastic", GREEN, 52, FS_BTN)
+        m1.clicked.connect(lambda: self._do_action("uconsole-radio meshtastic"))
+        row.addWidget(m1)
+        m2 = action_btn("MeshCore", PURPLE, 52, FS_BTN)
+        m2.clicked.connect(lambda: self._do_action("uconsole-radio meshcore"))
+        row.addWidget(m2)
+        m3 = action_btn("Off", RED, 52, FS_BTN)
+        m3.clicked.connect(lambda: self._do_action("uconsole-radio off"))
+        row.addWidget(m3)
         mode_lay.addLayout(row)
         lay.addWidget(card_mode)
 
-        # Mesh apps
         card_apps, apps_lay = card_frame("Mesh Apps", CYAN)
         row2 = QHBoxLayout()
-        row2.setSpacing(4)
-        c1 = action_btn("Contact (TUI)", GREEN)
-        c1.clicked.connect(self._launch_contact)
-        row2.addWidget(c1)
-        c2 = action_btn("MeshCore TUI", PURPLE)
-        c2.clicked.connect(self._launch_mc_tui)
-        row2.addWidget(c2)
+        row2.setSpacing(6)
+        a1 = action_btn("Contact (TUI)", GREEN, 48, FS_BTN)
+        a1.clicked.connect(self._launch_contact)
+        row2.addWidget(a1)
+        a2 = action_btn("MeshCore TUI", PURPLE, 48, FS_BTN)
+        a2.clicked.connect(self._launch_mc_tui)
+        row2.addWidget(a2)
         apps_lay.addLayout(row2)
-        c3 = action_btn("MeshDash (port 8000)", CYAN)
-        c3.clicked.connect(lambda: launch_browser("http://localhost:8000"))
-        apps_lay.addWidget(c3)
+        a3 = action_btn("MeshDash (port 8000)", CYAN, 48, FS_BTN)
+        a3.clicked.connect(lambda: launch_browser("http://localhost:8000"))
+        apps_lay.addWidget(a3)
         lay.addWidget(card_apps)
 
-        # AIO toggles
         card_aio, aio_lay = card_frame("AIO Module Power", CYAN)
-        self.mesh_aio_grid = QGridLayout()
-        self.mesh_aio_grid.setSpacing(4)
         self.aio_buttons = {}
+        grid = QGridLayout()
+        grid.setSpacing(6)
         for i, name in enumerate(["GPS", "SDR", "USB", "LORA"]):
             btn = toggle_btn(name, False)
             btn.clicked.connect(lambda _, n=name: self._toggle_aio(n))
-            self.mesh_aio_grid.addWidget(btn, i // 2, i % 2)
+            grid.addWidget(btn, i // 2, i % 2)
             self.aio_buttons[name] = btn
-        aio_lay.addLayout(self.mesh_aio_grid)
+        aio_lay.addLayout(grid)
         lay.addWidget(card_aio)
 
         lay.addStretch()
@@ -588,59 +566,54 @@ class MarineConsole(QMainWindow):
         inner = QWidget()
         inner.setStyleSheet(f"background-color: {BG};")
         lay = QVBoxLayout(inner)
-        lay.setContentsMargins(12, 8, 12, 8)
-        lay.setSpacing(8)
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setSpacing(10)
 
-        # GPS & Time
         card_gps, gps_lay = card_frame("GPS & Time", GREEN)
         row = QHBoxLayout()
-        row.setSpacing(4)
-        b1 = action_btn("PyGPSClient", GREEN)
-        b1.clicked.connect(lambda: launch("pygpsclient 2>/dev/null &"))
-        row.addWidget(b1)
-        b2 = action_btn("Sync RTC", CYAN)
-        b2.clicked.connect(self._sync_rtc)
-        row.addWidget(b2)
+        row.setSpacing(6)
+        g1 = action_btn("PyGPSClient", GREEN, 48, FS_BTN)
+        g1.clicked.connect(lambda: launch("pygpsclient 2>/dev/null &"))
+        row.addWidget(g1)
+        g2 = action_btn("Sync RTC", CYAN, 48, FS_BTN)
+        g2.clicked.connect(self._sync_rtc)
+        row.addWidget(g2)
         gps_lay.addLayout(row)
         lay.addWidget(card_gps)
 
-        # Keyboard backlight
         card_kbd, kbd_lay = card_frame("Keyboard", YELLOW)
         self.btn_kbd = toggle_btn("Backlight", False)
         self.btn_kbd.clicked.connect(self._toggle_kbd)
         kbd_lay.addWidget(self.btn_kbd)
         lay.addWidget(card_kbd)
 
-        # Diagnostics
         card_diag, diag_lay = card_frame("Diagnostics", ORANGE)
-        b3 = action_btn("Run Diagnostics", ORANGE)
-        b3.clicked.connect(lambda: launch_terminal("uconsole-doctor"))
-        diag_lay.addWidget(b3)
+        d1 = action_btn("Run Diagnostics", ORANGE, 48, FS_BTN)
+        d1.clicked.connect(lambda: launch_terminal("uconsole-doctor"))
+        diag_lay.addWidget(d1)
         lay.addWidget(card_diag)
 
-        # Tools
         card_tools, tools_lay = card_frame("Quick Tools", WHITE)
         row3 = QHBoxLayout()
-        row3.setSpacing(4)
-        b4 = action_btn("Terminal", WHITE)
-        b4.clicked.connect(lambda: launch_terminal())
-        row3.addWidget(b4)
-        b5 = action_btn("AIO Tray GUI", CYAN)
-        b5.clicked.connect(lambda: launch("aiov2_ctl --gui 2>/dev/null &"))
-        row3.addWidget(b5)
+        row3.setSpacing(6)
+        t1 = action_btn("Terminal", WHITE, 48, FS_BTN)
+        t1.clicked.connect(lambda: launch_terminal())
+        row3.addWidget(t1)
+        t2 = action_btn("AIO Tray GUI", CYAN, 48, FS_BTN)
+        t2.clicked.connect(lambda: launch("aiov2_ctl --gui 2>/dev/null &"))
+        row3.addWidget(t2)
         tools_lay.addLayout(row3)
         lay.addWidget(card_tools)
 
-        # Power
         card_pwr, pwr_lay = card_frame("Power", RED)
         row4 = QHBoxLayout()
-        row4.setSpacing(4)
-        b6 = action_btn("Reboot", ORANGE, 40, 10)
-        b6.clicked.connect(lambda: subprocess.run("sudo reboot", shell=True))
-        row4.addWidget(b6)
-        b7 = action_btn("Shutdown", RED, 40, 10)
-        b7.clicked.connect(lambda: subprocess.run("sudo shutdown -h now", shell=True))
-        row4.addWidget(b7)
+        row4.setSpacing(6)
+        p1 = action_btn("Reboot", ORANGE, 48, FS_BTN)
+        p1.clicked.connect(lambda: subprocess.run("sudo reboot", shell=True))
+        row4.addWidget(p1)
+        p2 = action_btn("Shutdown", RED, 48, FS_BTN)
+        p2.clicked.connect(lambda: subprocess.run("sudo shutdown -h now", shell=True))
+        row4.addWidget(p2)
         pwr_lay.addLayout(row4)
         lay.addWidget(card_pwr)
 
@@ -741,7 +714,7 @@ class MarineConsole(QMainWindow):
         bc = GREEN if bat["capacity"] != "?" and int(bat["capacity"]) > 30 else RED
         if ac: bc = CYAN
         self.lbl_bat.setText(f"BAT {bat['capacity']}%")
-        self.lbl_bat.setStyleSheet(f"QLabel {{ background-color: {bc}18; color: {bc}; border: 1px solid {bc}50; border-radius: 10px; padding: 2px 8px; }}")
+        self.lbl_bat.setStyleSheet(f"QLabel {{ background-color: {bc}18; color: {bc}; border: 1px solid {bc}50; border-radius: 10px; padding: 3px 10px; }}")
         self.lbl_pwr.setText(f"PWR {bat['power']}")
         wifi = get_wifi()
         self.lbl_wifi.setText(f"WiFi {wifi['ssid']}")
@@ -749,16 +722,13 @@ class MarineConsole(QMainWindow):
         mode = get_mesh_mode()
         mc = GREEN if mode == "Meshtastic" else PURPLE if mode == "MeshCore" else RED
         self.lbl_mesh.setText(f"MESH {mode}")
-        self.lbl_mesh.setStyleSheet(f"QLabel {{ background-color: {mc}18; color: {mc}; border: 1px solid {mc}50; border-radius: 10px; padding: 2px 8px; }}")
-        # GPS
+        self.lbl_mesh.setStyleSheet(f"QLabel {{ background-color: {mc}18; color: {mc}; border: 1px solid {mc}50; border-radius: 10px; padding: 3px 10px; }}")
         if sh("systemctl is-active gpsd 2>/dev/null") == "active":
             self.lbl_gps.setText("GPS ON")
-            self.lbl_gps.setStyleSheet(f"QLabel {{ background-color: {GREEN}18; color: {GREEN}; border: 1px solid {GREEN}50; border-radius: 10px; padding: 2px 8px; }}")
+            self.lbl_gps.setStyleSheet(f"QLabel {{ background-color: {GREEN}18; color: {GREEN}; border: 1px solid {GREEN}50; border-radius: 10px; padding: 3px 10px; }}")
         else:
             self.lbl_gps.setText("GPS OFF")
-            self.lbl_gps.setStyleSheet(f"QLabel {{ background-color: {RED}18; color: {RED}; border: 1px solid {RED}50; border-radius: 10px; padding: 2px 8px; }}")
-
-        # Update dashboard data
+            self.lbl_gps.setStyleSheet(f"QLabel {{ background-color: {RED}18; color: {RED}; border: 1px solid {RED}50; border-radius: 10px; padding: 3px 10px; }}")
         self._refresh_dashboard()
 
     def _refresh_aio(self) -> None:
@@ -784,17 +754,49 @@ class MarineConsole(QMainWindow):
         self.btn_kbd.blockSignals(False)
 
     def _refresh_dashboard(self) -> None:
-        # Update dashboard AIO summary
+        # SDR status
         states = self.aio_states
+        sdr_on = states.get("SDR", False)
+        if sdr_on:
+            self.dash_sdr.setText(
+                "SDR is ON ● Ready to decode\n\n"
+                "One SDR = one decode mode at a time:\n"
+                "• AIS vessel tracking (162 MHz)\n"
+                "• DSC distress (156.525 MHz)\n"
+                "• Pager POCSAG/FLEX\n"
+                "• 433 MHz sensors\n"
+                "• ADS-B aircraft (1090 MHz)\n\n"
+                "Use iNTERCEPT to select decode mode."
+            )
+            self.dash_sdr.setStyleSheet(f"color: {GREEN}; border: none;")
+        else:
+            self.dash_sdr.setStyleSheet(f"color: {DIM}; border: none;")
+
+        # System summary
         lines = []
         for name in ["GPS", "SDR", "USB", "LORA"]:
             on = states.get(name, False)
-            c = "●" if on else "○"
-            lines.append(f"{name:5s} {c} {'ON ' if on else 'OFF'}")
+            lines.append(f"{name:5s} {'● ON ' if on else '○ OFF'}")
+        lines.append(f"")
         lines.append(f"Mesh: {get_mesh_mode()}")
-        lines.append(f"VNC: {get_vnc_status()}")
         lines.append(f"Bat: {get_battery()['capacity']}%  PWR: {get_battery()['power']}")
-        self.dash_aio.setText("\n".join(lines))
+        lines.append(f"WiFi: {get_wifi()['ssid']}")
+        self.dash_sys.setText("\n".join(lines))
+
+        # Mesh status
+        mode = get_mesh_mode()
+        mesh_lines = [
+            f"Mode: {mode}",
+            f"",
+            f"Meshtastic — long-range LoRa mesh",
+            f"MeshCore  — decentralised mesh comms",
+            f"",
+            f"Apps:",
+            f"  Contact  — Meshtastic TUI chat",
+            f"  MeshCore TUI — MeshCore TUI chat",
+            f"  MeshDash — web dashboard (port 8000)",
+        ]
+        self.dash_mesh.setText("\n".join(mesh_lines))
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
@@ -810,7 +812,6 @@ def main():
     pal.setColor(QPalette.ColorRole.WindowText, QColor(WHITE))
     app.setPalette(pal)
     win = MarineConsole()
-    # Select dashboard by default
     win._switch_page("dashboard")
     win.show()
     sys.exit(app.exec())
