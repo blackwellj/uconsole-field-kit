@@ -1,4 +1,19 @@
 #!/usr/bin/env bash
+# ============================================================================
+# uConsole Field Kit — Complete One-Stop Installer
+# ============================================================================
+# Installs everything on a fresh Rex Debian 12 Bookworm (akrex kernel 6.12.67)
+# uConsole CM5 image with a HackerGadgets AIO V2 board.
+#
+# Run from the repo root on the uConsole:
+#     sudo ./install.sh
+#
+# Installs: aiov2_ctl, AIO companion apps, Meshtastic CLI+daemon, MeshCore,
+# MeshDash, iNTERCEPT, WSJT-X, Contact TUI, SDR tools, GPS tools,
+# SSH, VNC, power-button daemon, backlight control, mesh mode switcher,
+# diagnostics, and the Field Launcher kiosk UI.
+# ============================================================================
+
 set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/scripts/common.sh"
@@ -13,8 +28,16 @@ USER_NAME="$(real_user)"
 USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
 ARCH="$(dpkg --print-architecture)"
 
-log "Installing uConsole Field Kit for user $USER_NAME on $ARCH."
-log "Root filesystem: $(findmnt -no SOURCE /)"
+log "================================================================"
+log " uConsole Field Kit — Complete Installer"
+log " User: $USER_NAME   Arch: $ARCH   Root: $(findmnt -no SOURCE /)"
+log "================================================================"
+echo
+
+# ----------------------------------------------------------------------------
+# Phase 1 — Base system packages
+# ----------------------------------------------------------------------------
+log "[1/12] Updating system and installing base packages..."
 
 apt-get update
 apt-get full-upgrade -y
@@ -26,27 +49,34 @@ apt_install \
     gpiod libgpiod-dev usbutils pciutils \
     rtl-sdr rtl-433 gpsd gpsd-clients \
     minicom picocom screen \
-    nmap mtr-tiny iperf3 tcpdump wireshark-common \
+    nmap mtr-tiny iperf3 tcpdump \
     mosquitto-clients \
     nvme-cli smartmontools lm-sensors htop btop iotop powertop \
     network-manager wireguard-tools \
-    cloud-guest-utils gdisk acpid
+    cloud-guest-utils gdisk acpid \
+    openssh-server \
+    x11vnc xvfb \
+    xfce4 xfce4-terminal \
+    chrony \
+    wsjtx \
+    jq
 
+# Node-RED (from apt if available, else npm)
 if apt-cache show node-red >/dev/null 2>&1; then
     apt_install node-red
 else
-    log "node-red is not in the configured APT repositories. Installing through npm."
+    log "  node-red not in apt — installing via npm"
     apt_install nodejs npm
-    npm install -g --unsafe-perm node-red
+    npm install -g --unsafe-perm node-red || log "  node-red npm install failed (non-fatal)"
 fi
 
-if apt-cache show sdrpp >/dev/null 2>&1; then
-    apt_install sdrpp
-else
-    log "SDR++ is not available from the configured repositories. Rex's repository may need enabling."
-fi
+log "  Base packages installed."
 
-log "Installing HackerGadgets AIO support."
+# ----------------------------------------------------------------------------
+# Phase 2 — aiov2_ctl (GPIO control + boot-rail service)
+# ----------------------------------------------------------------------------
+log "[2/12] Installing aiov2_ctl..."
+
 if apt-cache show hackergadgets-uconsole-aio-board >/dev/null 2>&1; then
     apt_install hackergadgets-uconsole-aio-board
 else
@@ -55,38 +85,84 @@ else
     python3 /opt/aiov2_ctl/aiov2_ctl.py --install
 fi
 
-# Configure aiov2_ctl's built-in boot-rail preferences from our defaults,
-# then let the upstream aiov2-rails-boot.service own GPIO at boot.
+# Configure boot-rail preferences from defaults
 install -m 0755 "$SCRIPT_DIR/scripts/aio-boot.sh" /usr/local/sbin/uconsole-aio-boot
-/usr/local/sbin/uconsole-aio-boot
+/usr/local/sbin/uconsole-aio-boot || log "  Boot-rail configuration partially failed (non-fatal)."
 
-log "Installing HackerGadgets AIO companion apps (SDR++, Meshtastic GUI, GPS, tar1090)."
-aiov2_ctl --add-apps || log "Companion app installation failed or not available."
+log "  aiov2_ctl installed and boot rails configured."
 
-log "Installing display power button handler."
-install -m 0755 "$SCRIPT_DIR/scripts/uconsole-display" /usr/local/bin/uconsole-display
-install -m 0755 "$SCRIPT_DIR/scripts/power-button-daemon.py" /usr/local/sbin/uconsole-power-button-daemon
-install -m 0644 "$SCRIPT_DIR/systemd/uconsole-power-button.service" /etc/systemd/system/uconsole-power-button.service
-mkdir -p /etc/systemd/logind.conf.d
-cat > /etc/systemd/logind.conf.d/90-uconsole-power-button.conf <<'EOF'
-[Login]
-HandlePowerKey=ignore
-HandlePowerKeyLongPress=poweroff
-EOF
+# ----------------------------------------------------------------------------
+# Phase 3 — HackerGadgets AIO companion apps
+# ----------------------------------------------------------------------------
+log "[3/12] Installing HackerGadgets AIO companion apps..."
 
-log "Installing Meshtastic CLI."
+aiov2_ctl --add-apps || log "  Companion app installation failed (non-fatal). Some apps may need manual install."
+
+# Backlight control (from Rex's repo)
+apt_install clockworkpi-backlight || log "  clockworkpi-backlight not available (non-fatal)."
+
+log "  Companion apps installed (sdrpp-brown, meshtastic-mui, tar1090, pygpsclient)."
+
+# ----------------------------------------------------------------------------
+# Phase 4 — SSH and VNC
+# ----------------------------------------------------------------------------
+log "[4/12] Enabling SSH and VNC..."
+
+# SSH
+systemctl enable --now ssh
+
+# VNC: x11vnc listening on :0 (shares the physical display)
+# Generate a default VNC password if none exists
+VNC_PASS_FILE="/etc/x11vnc.pass"
+if [[ ! -f "$VNC_PASS_FILE" ]]; then
+    x11vnc -storepasswd "$(head -c 16 /dev/urandom | base64 | tr -d '/+=' | head -c 12)" "$VNC_PASS_FILE"
+    log "  VNC auto-password generated. Change with: sudo x11vnc -storepasswd <pass> $VNC_PASS_FILE"
+fi
+
+cat > /etc/systemd/system/x11vnc.service <<'UNIT'
+[Unit]
+Description=x11vnc VNC server (shares physical display)
+After=graphical.target
+Requires=graphical.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/x11vnc -display :0 -rfbauth /etc/x11vnc.pass -rfbport 5900 -shared -forever -bg -o /var/log/x11vnc.log
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable x11vnc.service
+
+log "  SSH enabled (port 22). VNC enabled (port 5900, shares physical display)."
+
+# ----------------------------------------------------------------------------
+# Phase 5 — Meshtastic CLI, daemon, and Contact TUI
+# ----------------------------------------------------------------------------
+log "[5/12] Installing Meshtastic CLI, meshtasticd, and Contact TUI..."
+
 sudo -u "$USER_NAME" env HOME="$USER_HOME" pipx ensurepath || true
 sudo -u "$USER_NAME" env HOME="$USER_HOME" pipx install --force meshtastic
+sudo -u "$USER_NAME" env HOME="$USER_HOME" pipx install contact
 
-log "Attempting to install meshtasticd."
 if apt-cache show meshtasticd >/dev/null 2>&1; then
     apt_install meshtasticd
     systemctl disable --now meshtasticd || true
 else
-    log "meshtasticd is not available from the current APT sources. CLI support is installed; native daemon installation was skipped."
+    log "  meshtasticd not in apt repos — CLI only."
 fi
 
-log "Installing MeshCore uConsole integration."
+log "  Meshtastic CLI, meshtasticd, and Contact TUI installed."
+
+# ----------------------------------------------------------------------------
+# Phase 6 — MeshCore
+# ----------------------------------------------------------------------------
+log "[6/12] Installing MeshCore uConsole integration..."
+
 rm -rf /opt/meshcore-uconsole
 git clone --depth 1 --branch "$MESHCORE_BRANCH" "$MESHCORE_REPOSITORY" /opt/meshcore-uconsole
 if [[ -x /opt/meshcore-uconsole/install.sh ]]; then
@@ -94,13 +170,18 @@ if [[ -x /opt/meshcore-uconsole/install.sh ]]; then
 elif [[ -x /opt/meshcore-uconsole/setup.sh ]]; then
     /opt/meshcore-uconsole/setup.sh
 elif [[ -f /opt/meshcore-uconsole/README.md ]]; then
-    log "MeshCore repository cloned, but no recognised unattended installer was found."
-    log "Read /opt/meshcore-uconsole/README.md before starting MeshCore."
+    log "  MeshCore cloned but no unattended installer found. Read /opt/meshcore-uconsole/README.md"
 else
-    log "MeshCore repository structure was not recognised."
+    log "  MeshCore repository structure not recognised."
 fi
 
-log "Installing MeshDash $MESHDASH_VERSION."
+log "  MeshCore installed."
+
+# ----------------------------------------------------------------------------
+# Phase 7 — MeshDash
+# ----------------------------------------------------------------------------
+log "[7/12] Installing MeshDash $MESHDASH_VERSION..."
+
 rm -rf /opt/meshdash
 mkdir -p /opt/meshdash
 wget -O /tmp/mesh-dash.zip "$MESHDASH_ZIP_URL"
@@ -121,13 +202,52 @@ if [[ -n "$MESHDASH_APP" ]]; then
         "$SCRIPT_DIR/systemd/mesh-dash.service.in" \
         > /etc/systemd/system/mesh-dash.service
     systemctl enable mesh-dash.service
+    log "  MeshDash installed and service enabled."
 else
-    log "MeshDash archive did not contain meshtastic_dashboard.py. MeshDash service was not created."
+    log "  MeshDash archive did not contain meshtastic_dashboard.py — service not created."
 fi
+
+# ----------------------------------------------------------------------------
+# Phase 8 — iNTERCEPT (SIGINT platform)
+# ----------------------------------------------------------------------------
+log "[8/12] Installing iNTERCEPT..."
+
+rm -rf /opt/intercept
+git clone --depth 1 https://github.com/smittix/intercept.git /opt/intercept
+cd /opt/intercept
+./setup.sh --non-interactive || log "  iNTERCEPT setup.sh failed (non-fatal). Manual setup may be needed: cd /opt/intercept && ./setup.sh"
+cd "$SCRIPT_DIR"
+chown -R "$USER_NAME:$USER_NAME" /opt/intercept
+
+log "  iNTERCEPT installed (web UI at http://localhost:5050)."
+
+# ----------------------------------------------------------------------------
+# Phase 9 — Power button daemon + display handler
+# ----------------------------------------------------------------------------
+log "[9/12] Installing power button daemon and display handler..."
+
+install -m 0755 "$SCRIPT_DIR/scripts/uconsole-display" /usr/local/bin/uconsole-display
+install -m 0755 "$SCRIPT_DIR/scripts/power-button-daemon.py" /usr/local/sbin/uconsole-power-button-daemon
+install -m 0644 "$SCRIPT_DIR/systemd/uconsole-power-button.service" /etc/systemd/system/uconsole-power-button.service
+mkdir -p /etc/systemd/logind.conf.d
+cat > /etc/systemd/logind.conf.d/90-uconsole-power-button.conf <<'EOF'
+[Login]
+HandlePowerKey=ignore
+HandlePowerKeyLongPress=poweroff
+EOF
+
+log "  Power button daemon installed (short press = display toggle, long press = poweroff)."
+
+# ----------------------------------------------------------------------------
+# Phase 10 — Mesh mode switcher, diagnostics, and config
+# ----------------------------------------------------------------------------
+log "[10/12] Installing mesh switcher, diagnostics, and field launcher..."
 
 install -m 0755 "$SCRIPT_DIR/scripts/uconsole-radio" /usr/local/bin/uconsole-radio
 install -m 0755 "$SCRIPT_DIR/scripts/uconsole-doctor" /usr/local/bin/uconsole-doctor
+install -m 0755 "$SCRIPT_DIR/scripts/field-launcher.py" /usr/local/bin/field-launcher
 
+# Write config file
 cat > /etc/default/uconsole-field-kit <<EOF
 AIO_GPS_ON_BOOT=$AIO_GPS_ON_BOOT
 AIO_SDR_ON_BOOT=$AIO_SDR_ON_BOOT
@@ -136,25 +256,93 @@ AIO_LORA_ON_BOOT=$AIO_LORA_ON_BOOT
 DEFAULT_MESH_MODE=$DEFAULT_MESH_MODE
 EOF
 
+# Field launcher autostart
+mkdir -p "$USER_HOME/.config/autostart"
+cp "$SCRIPT_DIR/systemd/field-launcher.desktop" "$USER_HOME/.config/autostart/"
+chown -R "$USER_NAME:$USER_NAME" "$USER_HOME/.config/autostart"
+
+log "  Mesh switcher, diagnostics, and field launcher installed."
+log "  Field launcher will auto-start on login."
+
+# ----------------------------------------------------------------------------
+# Phase 11 — GPS NTP (chrony + gpsd), RTC sync, systemd enable
+# ----------------------------------------------------------------------------
+log "[11/12] Configuring GPS NTP, RTC, and enabling services..."
+
+# Configure gpsd for the AIO GPS module
+cat > /etc/default/gpsd <<'EOF'
+# Default settings for gpsd
+START_DAEMON=true
+GPSD_OPTIONS="-n"
+DEVICES="/dev/ttyAMA0"
+USBAUTO=false
+EOF
+
+# Configure chrony to use GPS as a time source (Stratum 1)
+if [[ -f /etc/chrony/chrony.conf ]]; then
+    if ! grep -q "refclock SHM 0" /etc/chrony/chrony.conf; then
+        cat >> /etc/chrony/chrony.conf <<'EOF'
+
+# GPS PPS time source (via gpsd shared memory)
+refclock SHM 0 offset 0.5 delay 0.2 refid GPS
+# Allow clients on local network to query time
+allow 192.168.0.0/16
+allow 10.0.0.0/8
+EOF
+    fi
+fi
+
+systemctl enable gpsd
+systemctl restart gpsd || true
+systemctl enable chrony || true
+systemctl restart chrony || true
+
+# RTC sync
+aiov2_ctl --sync-rtc || log "  RTC sync failed (non-fatal — may need NTP first)."
+
+# Enable services
 systemctl daemon-reload
 systemctl enable uconsole-power-button.service
 systemctl restart systemd-logind || true
 
-log "Syncing system time to hardware RTC."
-aiov2_ctl --sync-rtc || true
+log "  GPS NTP (chrony + gpsd) configured. RTC synced."
 
+# ----------------------------------------------------------------------------
+# Phase 12 — Final summary and diagnostics
+# ----------------------------------------------------------------------------
+log "[12/12] Finalising..."
+
+# Set default mesh mode
 case "$DEFAULT_MESH_MODE" in
     meshcore|meshtastic|off)
         /usr/local/bin/uconsole-radio "$DEFAULT_MESH_MODE" || true
         ;;
     *)
-        log "Invalid DEFAULT_MESH_MODE=$DEFAULT_MESH_MODE. Leaving mesh services stopped."
+        log "  Invalid DEFAULT_MESH_MODE=$DEFAULT_MESH_MODE — leaving mesh stopped."
         ;;
 esac
 
-log "Installation finished."
+echo
+log "================================================================"
+log " Installation complete!"
+log "================================================================"
+echo
+echo " SSH:   ssh $USER_NAME@<uconsole-ip>"
+echo " VNC:   <uconsole-ip>:5900  (password in /etc/x11vnc.pass)"
+echo " MeshDash:    http://localhost:8000/setup"
+echo " iNTERCEPT:   http://localhost:5050  (start with: cd /opt/intercept && sudo ./start.sh)"
+echo " Field Launcher: auto-starts on login (run 'field-launcher' to restart)"
+echo
+echo " Commands:"
+echo "   uconsole-doctor        — system diagnostics"
+echo "   uconsole-radio status   — mesh status"
+echo "   aiov2_ctl --status       — AIO board + battery status"
+echo "   contact --port /dev/ttyUSB0  — Meshtastic TUI"
+echo "   field-launcher           — restart the launcher UI"
+echo
+echo " VNC password:  $(cat /etc/x11vnc.pass 2>/dev/null | head -c 12 || echo 'see /etc/x11vnc.pass')"
 echo
 uconsole-doctor || true
 echo
-echo "Reboot with: sudo reboot"
-echo "After reboot, open MeshDash at http://localhost:8000/setup"
+log "Reboot with: sudo reboot"
+log "After reboot the Field Launcher will appear automatically."

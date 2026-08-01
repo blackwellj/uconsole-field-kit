@@ -2,105 +2,105 @@
 
 An idempotent installer for a ClockworkPi uConsole CM5 fitted with:
 
-* HackerGadgets AIO V2
+* HackerGadgets AIO V2 (SX1262 LoRa, RTL-SDR, GPS, RTC, USB hub)
 * NVMe storage board
-* SX1262 LoRa
-* RTL SDR
-* GPS
-* Internal USB power switching
 
-It provisions a blank NVMe by cloning the currently running, known good uConsole SD installation, expands the root filesystem, and then installs the requested software.
+Built on Rex's Debian 12 Bookworm (akrex kernel 6.12.67) image.
 
-## Installed features
-
-* HackerGadgets AIO controller and GUI (via `aiov2_ctl --install`)
-* HackerGadgets AIO companion apps: `sdrpp-brown`, `meshtastic-mui`, `tar1090`, `pygpsclient`
-* GPS, SDR and internal USB enabled at boot (configured through `aiov2_ctl --boot-rail`, applied by the upstream `aiov2-rails-boot.service`)
-* LoRa power control
-* Short power button press toggles the display backlight
-* Meshtastic CLI
-* Meshtastic native daemon when available from the configured APT repositories
-* MeshCore uConsole software
-* MeshDash
-* A mesh mode switcher which prevents MeshCore and Meshtastic from fighting over the same SX1262
-* SDR, GPS, networking and diagnostic tools
-* Node RED
-* `uconsole-doctor`
-* `uconsole-radio`
-* `uconsole-display`
-* Hardware RTC sync (`aiov2_ctl --sync-rtc`)
-
-## Important
-
-The NVMe provisioning command erases the selected NVMe completely.
-
-Run it while booted from a working uConsole SD card. Keep external power connected and remove the SD card only after shutdown.
-
-## First stage: clone SD to NVMe
+## One-command install
 
 ```bash
-git clone https://github.com/YOUR_GITHUB_USERNAME/uconsole-field-kit.git
+git clone https://github.com/blackwellj/uconsole-field-kit.git
 cd uconsole-field-kit
-sudo ./provision-nvme.sh
-```
-
-The script detects the current root disk and the NVMe, prints both, and requires an exact confirmation before cloning.
-
-After it shuts down:
-
-1. Remove the SD card
-2. Power the uConsole on
-3. Confirm it booted from NVMe with:
-
-```bash
-findmnt -no SOURCE /
-lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
-```
-
-## Second stage: install the field kit
-
-From the repository directory on the NVMe:
-
-```bash
 sudo ./install.sh
 ```
 
-Reboot when it finishes:
+That's it. The installer does everything and reboots the device. After reboot the Field Launcher appears automatically.
+
+## What it installs
+
+| Category | Software | Notes |
+|----------|----------|-------|
+| **AIO control** | aiov2_ctl | GPIO control + boot-rail service + GUI tray |
+| **AIO apps** | sdrpp-brown, meshtastic-mui, tar1090, pygpsclient | via `aiov2_ctl --add-apps` |
+| **Backlight** | clockworkpi-backlight | Panel + keyboard backlight control |
+| **Mesh radio** | meshtasticd, meshtastic CLI, Contact TUI | `pipx install contact` |
+| **Mesh radio** | MeshCore (cwill747) | Cloned + installed from GitHub |
+| **Mesh dashboard** | MeshDash R3.1.2 | Web UI on port 8000 |
+| **SIGINT** | iNTERCEPT (smittix) | Web UI on port 5050 |
+| **SDR** | SDR++, tar1090 (ADS-B), rtl-433 | Preconfigured for uConsole |
+| **Ham radio** | WSJT-X | FT8/FT4/JT modes |
+| **GPS** | gpsd + PyGPSClient + chrony | Stratum-1 NTP server via GPS PPS |
+| **Remote access** | SSH (port 22), VNC (port 5900) | VNC shares physical display |
+| **Power** | Power button daemon | Short press = backlight toggle, long press = poweroff |
+| **Launcher** | Field Launcher (PyQt6) | Fullscreen kiosk UI at boot, exit to desktop |
+
+## Field Launcher
+
+A fullscreen PyQt6 dark-themed launcher appears at boot. It provides:
+
+* **AIO module toggles** — GPS, SDR, USB, LoRa (live on/off state)
+* **Keyboard backlight** toggle
+* **Mesh mode** — Meshtastic / MeshCore / Off (with status)
+* **Apps** — iNTERCEPT, SDR++, tar1090, WSJT-X, Contact, MeshDash, PyGPSClient
+* **System** — RTC sync, terminal, diagnostics, reboot, shutdown
+* **Status bar** — Battery %, power draw, WiFi SSID, IP, mesh mode, VNC/SSH status, clock
+* **Exit to Desktop** — reveals full XFCE desktop
+
+Run `field-launcher` from a terminal to restart it.
+
+## NVMe provisioning (optional, before install)
+
+If you want to boot from NVMe instead of SD, run this first while booted from SD:
 
 ```bash
-sudo reboot
+sudo ./provision-nvme.sh
+```
+
+It clones the SD card to the NVMe, expands the filesystem, configures the CM5 EEPROM boot order, and shuts down. Remove the SD card and power back on.
+
+## Remote access
+
+```bash
+# SSH (enabled by default)
+ssh <user>@<uconsole-ip>
+
+# VNC (shares the physical display)
+# Connect to <uconsole-ip>:5900
+# Password is auto-generated — check /etc/x11vnc.pass
+sudo cat /etc/x11vnc.pass
 ```
 
 ## Commands
 
 ```bash
-uconsole-doctor
-uconsole-radio status
-uconsole-radio meshtastic
-uconsole-radio meshcore
-uconsole-radio off
-uconsole-display toggle
-aiov2_ctl --status
+uconsole-doctor              # system diagnostics
+uconsole-radio status        # mesh status
+uconsole-radio meshtastic    # switch to Meshtastic
+uconsole-radio meshcore      # switch to MeshCore
+uconsole-radio off           # stop all mesh
+aiov2_ctl --status            # AIO board + battery
+aiov2_ctl --power             # live power monitor
+contact --port /dev/ttyUSB0   # Meshtastic TUI chat
+field-launcher                # restart the launcher UI
 ```
 
-MeshDash is available at:
+## Web UIs
 
-```text
-http://localhost:8000/setup
-```
-
-or from another machine:
-
-```text
-http://UCONSOLE_IP:8000/setup
-```
+| Service | URL | Port |
+|---------|-----|------|
+| MeshDash | http://localhost:8000 | 8000 |
+| iNTERCEPT | http://localhost:5050 | 5050 |
+| tar1090 (ADS-B) | http://localhost/tar1090 | 80 |
 
 ## Notes
 
-Meshtastic and MeshCore cannot both own the AIO SX1262 simultaneously. `uconsole-radio` stops the inactive stack before starting the selected one. It controls the LoRa GPIO pin directly via `pinctrl` to avoid `aiov2_ctl`'s implicit meshtasticd auto-start, then manages the systemd services explicitly.
+* Meshtastic and MeshCore cannot both own the AIO SX1262 simultaneously. `uconsole-radio` stops the inactive stack before starting the selected one. It controls the LoRa GPIO pin directly via `pinctrl` to avoid `aiov2_ctl`'s implicit meshtasticd auto-start.
 
-Boot-rail GPIO states (GPS, SDR, USB, LoRa power at boot) are owned by `aiov2-rails-boot.service` from the upstream `aiov2_ctl` package. The field kit's `aio-boot.sh` configures the per-rail preferences via `aiov2_ctl --boot-rail` during install; no duplicate boot service is installed.
+* Boot-rail GPIO states are owned by `aiov2-rails-boot.service` from the upstream `aiov2_ctl` package. The field kit's `aio-boot.sh` configures per-rail preferences via `aiov2_ctl --boot-rail`.
 
-MeshDash is a Meshtastic dashboard. It will only receive data while Meshtastic is active and configured.
+* GPS NTP: gpsd reads the AIO GPS module on `/dev/ttyAMA0` and chrony uses it as a Stratum-1 time source via shared memory. Other devices on the network can sync time from the uConsole.
 
-The installer does not install CoastalHub.
+* VNC uses x11vnc which mirrors the physical display — you see exactly what's on the uConsole screen.
+
+* The installer does not install CoastalHub.

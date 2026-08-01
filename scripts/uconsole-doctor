@@ -27,7 +27,7 @@ else
     fail "aiov2_ctl missing"
 fi
 
-for command in meshtastic gpspipe rtl_433 rtl_test node-red; do
+for command in meshtastic contact gpspipe rtl_433 rtl_test node-red wsjtx; do
     if command -v "$command" >/dev/null 2>&1; then
         pass "$command installed"
     else
@@ -35,7 +35,7 @@ for command in meshtastic gpspipe rtl_433 rtl_test node-red; do
     fi
 done
 
-for service in aiov2-rails-boot.service uconsole-power-button.service mesh-dash.service; do
+for service in aiov2-rails-boot.service uconsole-power-button.service mesh-dash.service ssh.service x11vnc.service; do
     if systemctl is-enabled "$service" >/dev/null 2>&1; then
         pass "$service enabled"
     else
