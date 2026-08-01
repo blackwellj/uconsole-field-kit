@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=uConsole Field Launcher
+Comment=Full-screen control panel for the uConsole field kit
+Exec=/usr/bin/python3 /usr/local/bin/field-launcher
+Icon=utilities-system-monitor
+Terminal=false
+Categories=System;Utility;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+XDG_AUTOSTART_DELAY=5
