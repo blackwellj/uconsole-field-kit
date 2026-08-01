@@ -35,6 +35,37 @@ log "================================================================"
 echo
 
 # ----------------------------------------------------------------------------
+# Phase 0 — Create swap to prevent OOM during compilation
+# ----------------------------------------------------------------------------
+log "[0/12] Creating swap (4GB) to prevent OOM crashes during compilation..."
+
+SWAPFILE="/swapfile"
+if swapon --show | grep -q "$SWAPFILE"; then
+    log "  Swap already active."
+else
+    if [[ ! -f "$SWAPFILE" ]]; then
+        dd if=/dev/zero of="$SWAPFILE" bs=1M count=4096 status=progress
+        chmod 600 "$SWAPFILE"
+        mkswap "$SWAPFILE"
+    fi
+    swapon "$SWAPFILE"
+    # Persist across reboots
+    if ! grep -q "$SWAPFILE" /etc/fstab; then
+        echo "$SWAPFILE none swap sw 0 0" >> /etc/fstab
+    fi
+    log "  4GB swap created and activated."
+fi
+
+# Limit make/ninja parallelism to 2 jobs to avoid OOM on 4GB CM5
+export MAKEFLAGS="-j2"
+export CMAKE_BUILD_PARALLEL_LEVEL=2
+export npm_config_max_jobs=2
+log "  Build parallelism limited to 2 jobs (MAKEFLAGS=-j2)."
+
+# Disable apt/dpkg parallel downloads to reduce memory pressure
+export DPKG_MAX_THREADS=2
+
+# ----------------------------------------------------------------------------
 # Phase 1 — Base system packages
 # ----------------------------------------------------------------------------
 log "[1/12] Updating system and installing base packages..."
