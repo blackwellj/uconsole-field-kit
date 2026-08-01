@@ -418,10 +418,6 @@ class FieldLauncher(QMainWindow):
         btn_wsjtx.clicked.connect(self._launch_wsjtx)
         flay.addWidget(btn_wsjtx)
 
-        btn_rpitx = styled_button("rpitx-ui", ACCENT_RED)
-        btn_rpitx.clicked.connect(self._launch_rpitx)
-        flay.addWidget(btn_rpitx)
-
         panel.addWidget(frame)
 
         return panel
@@ -547,14 +543,6 @@ class FieldLauncher(QMainWindow):
             launch("wsjtx &")
         else:
             launch_terminal("echo 'WSJT-X not installed. Run: sudo apt install wsjtx'")
-
-    def _launch_rpitx(self) -> None:
-        if shutil_which("rpitx-ui"):
-            launch("sudo rpitx-ui &")
-        elif Path("/opt/rpitx-ui").exists():
-            launch_terminal("cd /opt/rpitx-ui && sudo rpitx-ui")
-        else:
-            launch_terminal("echo 'rpitx-ui not installed. Run: cd /opt/rpitx-ui && ./install.sh'")
 
     def _launch_meshcore_tui(self) -> None:
         if shutil_which("tui-meshcore"):
