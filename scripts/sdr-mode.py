@@ -25,20 +25,67 @@ import time
 import json
 import signal
 import logging
+import urllib.request
+import urllib.parse
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("sdr-mode")
 
 STATE_FILE = "/run/sdr-mode.json"
-PID_FILE = "/run/sdr-mode.pid"
+CONFIG_FILE = "/etc/coastalhub/node.conf"
+FREQS = {"pager": 153.075, "ais": 161.975, "dsc": 156.525}
 
-# Frequency presets (MHz)
-FREQS = {
-    "pager": 153.075,
-    "ais": 161.975,  # AIS 1 (also 162.025 for AIS 2)
-    "dsc": 156.525,  # VHF Ch 70
-}
+def load_config():
+    """Load CoastalHub node config."""
+    cfg = {}
+    try:
+        with open(CONFIG_FILE) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    cfg[k.strip()] = v.strip()
+    except Exception:
+        pass
+    return cfg
+
+def submit_pagermon(address, message, source):
+    """Submit a pager message to PagerMon/CoastalHub."""
+    cfg = load_config()
+    url = cfg.get("PAGERMON_URL", "https://pager.coastalhub.uk") + "/api/messages"
+    apikey = cfg.get("PAGERMON_APIKEY", "")
+    data = urllib.parse.urlencode({
+        "address": address,
+        "message": message,
+        "datetime": str(int(time.time())),
+        "source": source or cfg.get("NODE_NAME", "uConsole"),
+    }).encode()
+    try:
+        req = urllib.request.Request(url, data=data, headers={
+            "apikey": apikey,
+            "Content-Type": "application/x-www-form-urlencoded",
+        })
+        resp = urllib.request.urlopen(req, timeout=10)
+        log.info("PagerMon submitted: %s -> %d", message[:40], resp.status)
+    except Exception as e:
+        log.warning("PagerMon submit failed: %s", e)
+
+def submit_dsc(payload):
+    """Submit a DSC event to CoastalHub."""
+    cfg = load_config()
+    url = cfg.get("COASTALHUB_URL", "https://coastalhub.uk") + "/api/dsc/webhook"
+    token = cfg.get("COASTALHUB_DSC_TOKEN", "")
+    data = json.dumps(payload).encode()
+    try:
+        req = urllib.request.Request(url, data=data, headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        })
+        resp = urllib.request.urlopen(req, timeout=10)
+        log.info("DSC submitted: %d", resp.status)
+    except Exception as e:
+        log.warning("DSC submit failed: %s", e)
 
 def sh(cmd, timeout=5):
     try:
@@ -85,21 +132,40 @@ def ensure_sdr_on():
         sh("sudo -n aiov2_ctl SDR on 2>/dev/null")
         time.sleep(1)
 
+def parse_multimon_pager(proc, source_name):
+    """Parse multimon-ng POCSAG output and submit to PagerMon/CoastalHub."""
+    for line in proc.stdout:
+        line = line.decode("utf-8", errors="replace").strip()
+        if "POCSAG" in line and "Address:" in line and "Alpha:" in line:
+            try:
+                addr_part = line.split("Address:")[1].split("Function")[0].strip()
+                msg_part = line.split("Alpha:")[1].strip() if "Alpha:" in line else ""
+                if addr_part and msg_part:
+                    address = addr_part.zfill(7)
+                    msg = msg_part.replace("<NUL>", "").strip()
+                    log.info("POCSAG: addr=%s msg=%s", address, msg[:60])
+                    submit_pagermon(address, msg, source_name)
+            except Exception as e:
+                log.debug("Parse error: %s", e)
+
 def start_pager():
-    """Start POCSAG pager decoding via multimon-ng."""
+    """Start POCSAG pager decoding via multimon-ng → CoastalHub."""
     ensure_sdr_on()
     freq = FREQS["pager"]
-    # rtl_fm feeds audio to multimon-ng for POCSAG decoding
-    # -f frequency, -s sample rate, -l 0 (disable squelch for pager)
-    # multimon-ng -t raw -a POCSAG512 -a POCSAG1200 -a POCSAG2400 -f alpha
+    cfg = load_config()
+    source = cfg.get("NODE_NAME", "uConsole")
     cmd = (
         f"rtl_fm -f {freq}M -s 22050 -l 0 -g 40 -E DC 2>/dev/null | "
         f"multimon-ng -t raw -a POCSAG512 -a POCSAG1200 -a POCSAG2400 -f alpha - 2>/dev/null"
     )
     proc = subprocess.Popen(cmd, shell=True, start_new_session=True,
                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    # Start parser thread
+    import threading
+    t = threading.Thread(target=parse_multimon_pager, args=(proc, source), daemon=True)
+    t.start()
     save_state("pager", proc.pid)
-    log.info("Pager mode started on %.3f MHz (PID %d)", freq, proc.pid)
+    log.info("Pager mode started on %.3f MHz (PID %d) → CoastalHub", freq, proc.pid)
     return proc
 
 def start_ais():
