@@ -1,0 +1,14 @@
+[Unit]
+Description=Coastal Node — uConsole portable CoastalHub receiver daemon
+After=network-online.target gpsd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/coastal-node --daemon
+Restart=on-failure
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
